@@ -1,7 +1,8 @@
 """0c step 3 on Windows: the same workload, through jhext4, pulled by killing it.
 
     python -m yank.drivers.windows_kill --jhext4 jhext4.exe --image drive.img
-           --work DIR [--iterations 10] [--letter N] [--min-seconds 3 --max-seconds 12]
+           --work DIR [--fresh 6G] [--part 1] [--iterations 10] [--letter N]
+           [--min-seconds 3 --max-seconds 12]
 
 Run from Windows, in this harness/ folder. Each iteration mounts the image
 read/write through jhext4, runs the workload into a new folder on the drive,
@@ -17,6 +18,10 @@ PostgreSQL is not in this run: its Windows build is Project 4. SQLite,
 atomic replaces, appends, copies and credential files are.
 
 The image must be one this harness made (`--fresh`), never a real drive.
+`--fresh` lays it out the way prepare_drive.sh lays out a drive -- GPT, one
+partition -- so the program is asked to do on an image what it does on the
+stick. The first step 3 run used a whole-disk image instead and so passed
+`--part 0`; its numbers are recorded that way in docs/0c-step3-read-write.md.
 """
 
 from __future__ import annotations
@@ -32,16 +37,38 @@ from pathlib import Path
 
 from .. import acklog
 
+#
+# Judge the image in Linux. The work happens in /var/tmp, never /tmp: /tmp in
+# WSL is a tmpfs of a few GB -- a RAM disk -- so a copy of a drive-sized image
+# is silently truncated there and the loop device comes back zero-sized, which
+# reads as "the filesystem is broken" when nothing was ever written.
+#
+# It is a copy because the image lives on a Windows path, which cannot be
+# loop-mounted, and because the verifier mounts read/write so SQLite can finish
+# its own recovery -- as it would on a re-plugged drive.
+#
 WSL_CHECK = r"""
 set -e
-img="$1"; shift
-cp "$img" /tmp/yankw.img
-e2fsck -fy /tmp/yankw.img >/tmp/yankw-fsck1.txt 2>&1 || true
-if e2fsck -fn /tmp/yankw.img >/tmp/yankw-fsck2.txt 2>&1; then echo FSCK_CLEAN; else echo FSCK_DIRTY; tail -20 /tmp/yankw-fsck2.txt; exit 0; fi
-mkdir -p /tmp/yankw-mnt; mount -o loop /tmp/yankw.img /tmp/yankw-mnt  # a copy, so SQLite can finish its own recovery
+img="$1"; part="$2"; shift 2
+work=/var/tmp/yankw
+mkdir -p "$work/mnt"
+cp "$img" "$work/drive.img"
+want=$(stat -c %s "$img"); got=$(stat -c %s "$work/drive.img")
+[ "$want" = "$got" ] || { echo "COPY_SHORT $got of $want bytes into $work; df:"; df -h "$work"; exit 0; }
+loop=$(losetup -fP --show "$work/drive.img")
+cleanup() { umount "$work/mnt" 2>/dev/null || true; losetup -d "$loop"; }
+trap cleanup EXIT
+dev="$loop"
+if [ "$part" != 0 ]; then
+    dev="${loop}p${part}"
+    for _ in $(seq 1 40); do [ -b "$dev" ] && break; sleep 0.25; done
+    [ -b "$dev" ] || { echo "NO_PARTITION $dev did not appear; partition table:"; partx -s "$loop" 2>&1 | head; exit 0; }
+fi
+e2fsck -fy "$dev" >"$work/fsck-replay.txt" 2>&1 || true   # the journal replay, as a re-plug does it
+if e2fsck -fn "$dev" >"$work/fsck-check.txt" 2>&1; then echo FSCK_CLEAN; else echo FSCK_DIRTY; tail -20 "$work/fsck-check.txt"; exit 0; fi
+mount "$dev" "$work/mnt"
 cd "$HARNESS"
 python3 -m yank.verify "$@" || true
-umount /tmp/yankw-mnt
 """
 
 
@@ -50,9 +77,33 @@ def wsl_path(path: Path) -> str:
     return "/mnt/" + p[0].lower() + p[2:].replace("\\", "/")
 
 
-def mount(jhext4: Path, image: Path, letter: str, log: Path) -> subprocess.Popen:
+FRESH = r"""
+set -e
+img="$1"; size="$2"
+rm -f "$img"
+truncate -s "$size" "$img"
+parted -s -- "$img" mklabel gpt mkpart primary ext4 1MiB 100%
+loop=$(losetup -fP --show "$img")
+trap 'losetup -d "$loop"' EXIT
+for _ in $(seq 1 40); do [ -b "${loop}p1" ] && break; sleep 0.25; done
+mkfs.ext4 -q -F -L EXT4TEST -- "${loop}p1"
+sync
+"""
+
+
+def fresh(image: Path, size: str) -> None:
+    """prepare_drive.sh:121 and :134, on an image, from Linux: one partition in
+    a GPT, so the program is asked on an image exactly what the drive asks."""
+    done = subprocess.run(["wsl.exe", "-d", "Ubuntu", "-u", "root", "-e", "bash", "-c", FRESH,
+                           "fresh", wsl_path(image), size], capture_output=True, text=True)
+    if done.returncode != 0:
+        raise RuntimeError(f"the image could not be made: {done.stdout}{done.stderr}".strip())
+
+
+def mount(jhext4: Path, image: Path, part: int, letter: str, log: Path) -> subprocess.Popen:
     stream = open(log, "ab")
-    proc = subprocess.Popen([str(jhext4), "--disk", str(image), "--mount", letter, "--read-write"],
+    proc = subprocess.Popen([str(jhext4), "--disk", str(image), "--part", str(part),
+                             "--mount", letter, "--read-write"],
                             stdout=stream, stderr=stream, stdin=subprocess.DEVNULL,
                             creationflags=subprocess.CREATE_NO_WINDOW)
     stream.close()
@@ -74,6 +125,8 @@ def main() -> int:
     parser.add_argument("--image", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--letter", default="N")
+    parser.add_argument("--fresh", metavar="SIZE", help="make the image first, laid out as a drive is")
+    parser.add_argument("--part", type=int, default=1, help="0 for a whole-disk image")
     parser.add_argument("--iterations", type=int, default=10)
     parser.add_argument("--min-seconds", type=float, default=3)
     parser.add_argument("--max-seconds", type=float, default=12)
@@ -82,6 +135,8 @@ def main() -> int:
 
     harness = Path(__file__).resolve().parents[2]
     rng = random.Random(args.seed)
+    if args.fresh:
+        fresh(args.image, args.fresh)
     args.work.mkdir(parents=True, exist_ok=True)
     acks = args.work / "acks"
     acks.mkdir(exist_ok=True)
@@ -90,7 +145,7 @@ def main() -> int:
 
     for index in range(args.iterations):
         result: dict = {"iteration": index}
-        proc = mount(args.jhext4, args.image, args.letter, args.work / f"jhext4-{index}.log")
+        proc = mount(args.jhext4, args.image, args.part, args.letter, args.work / f"jhext4-{index}.log")
         log = acks / f"run-{index}.jsonl"
         env = {**os.environ, "PYTHONPATH": str(harness), "PYTHONDONTWRITEBYTECODE": "1"}
         workload = subprocess.Popen(
@@ -121,14 +176,20 @@ def main() -> int:
 
         runs = []
         for done in range(index + 1):
-            runs += ["--run", f"/tmp/yankw-mnt/run-{done}", wsl_path(acks / f"run-{done}.jsonl")]
+            runs += ["--run", f"/var/tmp/yankw/mnt/run-{done}", wsl_path(acks / f"run-{done}.jsonl")]
         check = subprocess.run(
             ["wsl.exe", "-d", "Ubuntu", "-u", "root", "-e", "env", f"HARNESS={wsl_path(harness)}",
-             "PYTHONDONTWRITEBYTECODE=1", "bash", "-c", WSL_CHECK, "check", wsl_path(args.image), *runs],
+             "PYTHONDONTWRITEBYTECODE=1", "bash", "-c", WSL_CHECK, "check", wsl_path(args.image),
+             str(args.part), *runs],
             capture_output=True, text=True)
         out = check.stdout
-        if "FSCK_CLEAN" not in out:
-            result.update(ok=False, failure="e2fsck -fn found problems after replay", detail=out[-2000:])
+        # A harness fault must never read as a filesystem fault: say which it was.
+        if out.startswith(("COPY_SHORT", "NO_PARTITION")) or not out.strip():
+            result.update(ok=False, failure="the check could not run: " + (out.strip() or "no output"),
+                          detail=(out + check.stderr)[-2000:], harness_fault=True)
+        elif "FSCK_CLEAN" not in out:
+            result.update(ok=False, failure="e2fsck -fn found problems after replay",
+                          detail=(out + check.stderr)[-2000:])
         else:
             try:
                 verdict = json.loads(out[out.index("{"):])

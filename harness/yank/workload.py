@@ -118,6 +118,13 @@ class Workload:
         for name, (rel, mode, synchronous) in SQLITE.items():
             connection = sqlite3.connect(self.target / rel, isolation_level=None)
             connection.execute(f"PRAGMA journal_mode={mode}")
+            # Say so if the mode did not take. SQLite answers a journal_mode it
+            # refused with the mode it kept instead rather than failing, so a run
+            # can believe it is testing WAL while testing DELETE -- which is the
+            # mode Hermes itself falls back to, and the dangerous one on Windows.
+            got = connection.execute("PRAGMA journal_mode").fetchone()[0]
+            if got.lower() != mode.lower():
+                raise RuntimeError(f"{name}: asked for journal_mode={mode}, this filesystem gave {got}")
             connection.execute(f"PRAGMA synchronous={synchronous}")
             connection.execute("CREATE TABLE IF NOT EXISTS rows (id INTEGER PRIMARY KEY, sha TEXT NOT NULL, payload TEXT NOT NULL)")
             self.connections[name] = connection

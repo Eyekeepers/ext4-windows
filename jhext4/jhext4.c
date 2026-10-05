@@ -618,13 +618,13 @@ static void usage(void)
 {
 	fprintf(stderr,
 		"usage: jhext4 --disk <image|\\\\.\\PhysicalDriveN> --mount <letter or path>\n"
-		"              [--part N] [--read-write] [--serial N] [--debug]\n");
+		"              [--part N] [--read-write] [--serial N] [--mount-manager] [--debug]\n");
 }
 
 int main(int argc, char **argv)
 {
 	const char *disk_path = NULL, *mount = NULL;
-	unsigned part = 0, serial = 0, debug = 0;
+	unsigned part = 0, serial = 0, debug = 0, mount_manager = 0;
 	DOKAN_OPTIONS options;
 	wchar_t mount_w[64];
 	long ret;
@@ -636,6 +636,15 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--part") && i + 1 < argc) part = (unsigned)atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--serial") && i + 1 < argc) serial = (unsigned)strtoul(argv[++i], NULL, 0);
 		else if (!strcmp(argv[i], "--read-write")) read_write = 1;
+		/* Register the drive letter with Windows' mount manager rather than
+		 * assigning it ourselves. Without it the drive works for ordinary file
+		 * calls but Windows cannot map the letter back to a volume, so
+		 * GetFinalPathNameByHandle fails -- and OpenClaw reads that failure as
+		 * "this database is on network storage" and drops SQLite to
+		 * journal_mode=DELETE. Measured in docs/0c-step4-ownership-and-paths.md.
+		 * It costs the per-session privacy CURRENT_SESSION gives, so it is a
+		 * flag until Project 7 settles which the product wants. */
+		else if (!strcmp(argv[i], "--mount-manager")) mount_manager = 1;
 		else if (!strcmp(argv[i], "--debug")) debug = 1;
 		else { usage(); return 2; }
 	}
@@ -702,7 +711,8 @@ int main(int argc, char **argv)
 	 * Current session, so the mount belongs to the owner who started it and
 	 * is not offered to other accounts. Case-sensitive, as ext4 is. */
 	options.SingleThread = TRUE;
-	options.Options = DOKAN_OPTION_REMOVABLE | DOKAN_OPTION_CURRENT_SESSION |
+	options.Options = DOKAN_OPTION_REMOVABLE |
+			  (mount_manager ? DOKAN_OPTION_MOUNT_MANAGER : DOKAN_OPTION_CURRENT_SESSION) |
 			  DOKAN_OPTION_CASE_SENSITIVE |
 			  (read_write ? 0 : DOKAN_OPTION_WRITE_PROTECT) |
 			  (debug ? (DOKAN_OPTION_DEBUG | DOKAN_OPTION_STDERR) : 0);
