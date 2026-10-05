@@ -64,14 +64,12 @@ jobs:
           # dokan2.dll is handed to the linker as a file, so no import library is
           # needed. The DRIVER is not redistributed: the user installs Dokany,
           # whose dokan2.sys is signed by Microsoft. See ATTRIBUTION.md.
-          $sdk = "DokanLibrary-$env:DOKANY_VERSION.zip"
-          Invoke-WebRequest "https://github.com/dokan-dev/dokany/releases/download/$env:DOKANY_TAG/$sdk" -OutFile $sdk
-          Expand-Archive $sdk -DestinationPath sdk -Force
-          $dll = Get-ChildItem sdk -Recurse -Filter dokan2.dll |
-                 Where-Object { $_.FullName -notmatch 'ARM|x86|Debug' } |
-                 Select-Object -First 1
-          if (-not $dll) { throw "no x64 release dokan2.dll in $sdk; see build/pins.json" }
-          Copy-Item $dll.FullName vendor/lib/dokan2.dll
+          # The release asset is dokan.zip; its layout is <arch>/<config>/dokan2.dll.
+          Invoke-WebRequest "https://github.com/dokan-dev/dokany/releases/download/$env:DOKANY_TAG/dokan.zip" -OutFile dokan.zip
+          Expand-Archive dokan.zip -DestinationPath sdk -Force
+          $dll = Join-Path sdk 'x64/Release/dokan2.dll'
+          if (-not (Test-Path $dll)) { throw "x64/Release/dokan2.dll not in dokan.zip; see build/pins.json" }
+          Copy-Item $dll vendor/lib/dokan2.dll
           Get-FileHash vendor/lib/dokan2.dll, vendor/include/dokan.h -Algorithm SHA256 |
             Select-Object Hash, Path | Format-List
 
@@ -89,7 +87,7 @@ jobs:
           # Three faults, each of which silently lost every "save now"
           # (docs/0c-step1-flush-proof.md). The patch refuses to apply if the
           # upstream code has moved, rather than patching the wrong thing.
-          python patches/apply_virtio_blk_flush.py --tree lkl
+          python patches/apply_virtio_blk_flush.py lkl
 
       - name: Build
         run: bash build/build.sh
