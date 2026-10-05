@@ -28,6 +28,12 @@ to do that. jhext4 now fsyncs the parent folder inside every rename before
 reporting success, so Windows programs get the guarantee careful Linux
 programs give themselves. One journal commit per rename.
 
+The same fault in a second place — a *deletion* that a database had counted as
+its commit — survived this run and was caught on the real drive in step 7
+(`docs/0c-step7-usb-drive.md`). Ten clean image pulls were not enough to find
+it; the fix now covers every change to a folder's contents, so these numbers
+predate it.
+
 ## Behaviour to know
 
 - **What a program was told is saved survives a pull.** An explicit

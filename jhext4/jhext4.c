@@ -32,6 +32,7 @@
 #include <string.h>
 #include <wchar.h>
 #include <windows.h>
+#include <winioctl.h>
 #include <dokan.h>
 #include <lkl.h>
 #include <lkl_host.h>
@@ -57,6 +58,56 @@ static int counting_request(struct lkl_disk d, struct lkl_blk_req *req)
 	if (req->type == LKL_DEV_BLK_TYPE_FLUSH || req->type == LKL_DEV_BLK_TYPE_FLUSH_OUT)
 		InterlockedIncrement(&flush_count);
 	return lkl_dev_blk_ops.request(d, req);
+}
+
+/* LKL asks the file's size, which a physical disk does not have: Windows
+ * answers GetFileSizeEx on \\.\PhysicalDriveN with an error, and the drive
+ * would attach as zero bytes. A disk is asked its length instead. */
+static int disk_capacity(struct lkl_disk d, unsigned long long *res)
+{
+	GET_LENGTH_INFORMATION length;
+	LARGE_INTEGER size;
+	DWORD got;
+
+	if (GetFileSizeEx(d.handle, &size) && size.QuadPart > 0) {
+		*res = size.QuadPart;
+		return 0;
+	}
+	if (DeviceIoControl(d.handle, IOCTL_DISK_GET_LENGTH_INFO, NULL, 0,
+			    &length, sizeof(length), &got, NULL)) {
+		*res = length.Length.QuadPart;
+		return 0;
+	}
+	return -1;
+}
+
+/*
+ * Make a change to a folder's contents durable before saying it happened:
+ * a rename, a delete, a new folder.
+ *
+ * On Linux a careful program fsyncs the folder after such a change, and only
+ * then is it safe from a pull. Windows has no way for a program to fsync a
+ * folder, so that step can never arrive from a Windows program; doing it here
+ * gives every Windows program the guarantee careful Linux programs give
+ * themselves. It costs one journal commit per change, which a single owner's
+ * agent never notices. A new file needs nothing here: fsyncing the file
+ * commits the journal transaction that created its name.
+ */
+static long sync_parent(char *path)
+{
+	char *slash = strrchr(path, '/');
+	long dir, ret;
+
+	if (!slash || slash == path)
+		return 0;
+	*slash = '\0';
+	dir = lkl_sys_open(path, LKL_O_RDONLY | LKL_O_DIRECTORY, 0);
+	*slash = '/';
+	if (dir < 0)
+		return dir;
+	ret = lkl_sys_fsync((int)dir);
+	lkl_sys_close((int)dir);
+	return ret;
 }
 
 /* Windows hands us "\dir\file" in UTF-16; ext4 wants "/mnt/dir/file" in UTF-8.
@@ -165,6 +216,8 @@ static NTSTATUS DOKAN_CALLBACK jh_create(LPCWSTR name, PDOKAN_IO_SECURITY_CONTEX
 			if (exists)
 				return creation == CREATE_NEW ? STATUS_OBJECT_NAME_COLLISION : STATUS_SUCCESS;
 			ret = lkl_sys_mkdir(path, 0700);
+			if (ret == 0)
+				ret = sync_parent(path);
 			return from_lkl(ret);
 		}
 		return exists ? STATUS_SUCCESS : STATUS_OBJECT_NAME_NOT_FOUND;
@@ -215,10 +268,14 @@ static void DOKAN_CALLBACK jh_cleanup(LPCWSTR name, PDOKAN_FILE_INFO info)
 		info->Context = 0;
 	}
 	if (info->DeletePending && read_write && to_lkl_path(name, path, sizeof(path)) == 0) {
-		if (info->IsDirectory)
-			lkl_sys_rmdir(path);
-		else
-			lkl_sys_unlink(path);
+		long ret = info->IsDirectory ? lkl_sys_rmdir(path) : lkl_sys_unlink(path);
+		/* SQLite in rollback mode commits by deleting its journal, and with
+		 * synchronous=EXTRA asks for the folder to be synced after -- which
+		 * its Windows code cannot do. Measured on the real test stick: the
+		 * deletion was lost to a pull, the journal came back, and SQLite
+		 * rolled back a commit it had acknowledged. */
+		if (ret == 0)
+			sync_parent(path);
 	}
 }
 
@@ -414,32 +471,10 @@ static NTSTATUS DOKAN_CALLBACK jh_move(LPCWSTR from, LPCWSTR to, BOOL replace, P
 	long ret = lkl_sys_rename(a, b);
 	if (ret < 0)
 		return from_lkl(ret);
-	/*
-	 * Make the rename itself durable before saying it happened.
-	 *
-	 * On Linux a careful saver writes a temp file, fsyncs it, renames it over
-	 * the old one and then fsyncs the folder, and only then is the new
-	 * version safe from a pull. Windows has no way for a program to fsync a
-	 * folder, so that last step can never arrive. Measured in the 0b
-	 * harness: an acknowledged replace came back as the previous version
-	 * after the drive was pulled. Doing the folder fsync here gives every
-	 * Windows program the guarantee careful Linux programs give themselves.
-	 * It costs one journal commit per rename, which a single owner's agent
-	 * never notices.
-	 */
-	char *slash = strrchr(b, '/');
-	if (slash && slash != b) {
-		*slash = '\0';
-		long dir = lkl_sys_open(b, LKL_O_RDONLY | LKL_O_DIRECTORY, 0);
-		*slash = '/';
-		if (dir >= 0) {
-			ret = lkl_sys_fsync((int)dir);
-			lkl_sys_close((int)dir);
-			if (ret < 0)
-				return from_lkl(ret);
-		}
-	}
-	return STATUS_SUCCESS;
+	/* Measured in the 0b harness: without this an acknowledged replace came
+	 * back as the previous version after the drive was pulled. */
+	ret = sync_parent(b);
+	return ret < 0 ? from_lkl(ret) : STATUS_SUCCESS;
 }
 
 static NTSTATUS DOKAN_CALLBACK jh_get_info(LPCWSTR name, LPBY_HANDLE_FILE_INFORMATION out,
@@ -621,6 +656,7 @@ int main(int argc, char **argv)
 	}
 	counting_ops = lkl_dev_blk_ops;
 	counting_ops.request = counting_request;
+	counting_ops.get_capacity = disk_capacity;
 	disk.ops = &counting_ops;
 
 	if (lkl_init(&lkl_host_ops) < 0) {
