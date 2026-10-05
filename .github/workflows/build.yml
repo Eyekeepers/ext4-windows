@@ -149,6 +149,8 @@ jobs:
           $(cat out/SHA256SUMS)
           \`\`\`
           EOF
-          gh release create "$TAG" --title "ext4win $TAG (unsigned)" \
+          # --repo, because this job never checks the repository out and gh
+          # otherwise finds the repository from a .git it does not have.
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "ext4win $TAG (unsigned)" \
             --notes-file notes.md --verify-tag \
             out/ext4win.exe out/msys-2.0.dll out/SHA256SUMS
