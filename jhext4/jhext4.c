@@ -39,6 +39,8 @@
 
 #define VIRTIO_BLK_F_FLUSH 9
 #define JH_SECTOR 512
+/* UTIME_OMIT from the kernel's uapi: leave this timestamp as it is. */
+#define JH_UTIME_OMIT ((1l << 30) - 2l)
 
 static struct lkl_disk disk;
 static char mount_in_lkl[64];
@@ -118,81 +120,326 @@ static DWORD attributes_of(const struct lkl_stat *st)
 
 /* ------------------------------------------------------------- Dokany calls */
 
+/* An open file's descriptor is kept as fd + 1, so that 0 means "none" --
+ * a descriptor can itself be 0. */
+#define FD_OF(info)       ((int)(info)->Context - 1)
+#define HAS_FD(info)      ((info)->Context != 0)
+#define SET_FD(info, fd)  ((info)->Context = (ULONG64)((fd) + 1))
+
 static NTSTATUS DOKAN_CALLBACK jh_create(LPCWSTR name, PDOKAN_IO_SECURITY_CONTEXT context,
 					 ACCESS_MASK access, ULONG attributes, ULONG share,
 					 ULONG disposition, ULONG options, PDOKAN_FILE_INFO info)
 {
 	char path[LKL_PATH_MAX];
 	struct lkl_stat st;
+	ACCESS_MASK generic;
+	DWORD creation, flags_attr;
 	long ret;
-	(void)context; (void)attributes; (void)share;
+	int exists, flags, wants_write;
+	(void)context; (void)share;
 
 	if (to_lkl_path(name, path, sizeof(path)) < 0)
 		return STATUS_OBJECT_NAME_INVALID;
 
-	if (!read_write && (disposition == FILE_CREATE || disposition == FILE_OVERWRITE ||
-			    disposition == FILE_OVERWRITE_IF || disposition == FILE_SUPERSEDE ||
-			    (access & (FILE_WRITE_DATA | FILE_APPEND_DATA | DELETE))))
-		return STATUS_MEDIA_WRITE_PROTECTED;
+	/* Dokany hands over kernel-mode values; turn them into the familiar
+	 * CreateFile ones, which is the documented way to read them. */
+	DokanMapKernelToUserCreateFileFlags(access, attributes, options, disposition,
+					    &generic, &flags_attr, &creation);
+	wants_write = (generic & (GENERIC_WRITE | FILE_WRITE_DATA | FILE_APPEND_DATA | DELETE)) != 0 ||
+		      creation == CREATE_NEW || creation == CREATE_ALWAYS || creation == TRUNCATE_EXISTING;
+	if (!read_write && (wants_write || (creation == OPEN_ALWAYS)))
+		if (wants_write || lkl_sys_stat(path, &st) < 0)
+			return STATUS_MEDIA_WRITE_PROTECTED;
 
 	ret = lkl_sys_stat(path, &st);
-	if (ret < 0) {
-		if (disposition == FILE_OPEN || disposition == FILE_OVERWRITE)
-			return from_lkl(ret);
-		return from_lkl(ret);   /* creating arrives with step 3 */
-	}
+	exists = ret == 0;
 
-	if (LKL_S_ISDIR(st.st_mode)) {
-		if (options & FILE_NON_DIRECTORY_FILE)
+	/* Directories. */
+	if ((exists && LKL_S_ISDIR(st.st_mode)) || (options & FILE_DIRECTORY_FILE)) {
+		if (exists && !LKL_S_ISDIR(st.st_mode))
+			return STATUS_NOT_A_DIRECTORY;
+		if (exists && (options & FILE_NON_DIRECTORY_FILE))
 			return STATUS_FILE_IS_A_DIRECTORY;
 		info->IsDirectory = TRUE;
-		return STATUS_SUCCESS;
+		if (creation == CREATE_NEW || creation == OPEN_ALWAYS) {
+			if (exists)
+				return creation == CREATE_NEW ? STATUS_OBJECT_NAME_COLLISION : STATUS_SUCCESS;
+			ret = lkl_sys_mkdir(path, 0700);
+			return from_lkl(ret);
+		}
+		return exists ? STATUS_SUCCESS : STATUS_OBJECT_NAME_NOT_FOUND;
 	}
-	if (options & FILE_DIRECTORY_FILE)
-		return STATUS_NOT_A_DIRECTORY;
 
-	/* The open file descriptor is the context; ReadFile uses it. */
-	ret = lkl_sys_open(path, LKL_O_RDONLY, 0);
+	/* Files. */
+	switch (creation) {
+	case CREATE_NEW:
+		if (exists) return STATUS_OBJECT_NAME_COLLISION;
+		flags = LKL_O_CREAT | LKL_O_EXCL;
+		break;
+	case CREATE_ALWAYS:
+		flags = LKL_O_CREAT | LKL_O_TRUNC;
+		break;
+	case OPEN_ALWAYS:
+		flags = LKL_O_CREAT;
+		break;
+	case TRUNCATE_EXISTING:
+		if (!exists) return STATUS_OBJECT_NAME_NOT_FOUND;
+		flags = LKL_O_TRUNC;
+		break;
+	default:	/* OPEN_EXISTING */
+		if (!exists) return STATUS_OBJECT_NAME_NOT_FOUND;
+		flags = 0;
+	}
+	/* New files are private (0600), as the drive's own tools make them:
+	 * credentials live on this drive. */
+	ret = lkl_sys_open(path, flags | (read_write ? LKL_O_RDWR : LKL_O_RDONLY), 0600);
+	if (ret < 0 && read_write && exists)	/* a file we may read but not write */
+		ret = lkl_sys_open(path, LKL_O_RDONLY, 0);
 	if (ret < 0)
 		return from_lkl(ret);
-	info->Context = (ULONG64)ret;
+	SET_FD(info, ret);
+
+	/* Windows expects "already existed" to be reported for these two. */
+	if (exists && (creation == OPEN_ALWAYS || creation == CREATE_ALWAYS))
+		return STATUS_OBJECT_NAME_COLLISION;
 	return STATUS_SUCCESS;
+}
+
+/* Cleanup runs when the last handle closes; deletion happens here, because
+ * Windows only decides it on the way out. */
+static void DOKAN_CALLBACK jh_cleanup(LPCWSTR name, PDOKAN_FILE_INFO info)
+{
+	char path[LKL_PATH_MAX];
+	if (HAS_FD(info)) {
+		lkl_sys_close(FD_OF(info));
+		info->Context = 0;
+	}
+	if (info->DeletePending && read_write && to_lkl_path(name, path, sizeof(path)) == 0) {
+		if (info->IsDirectory)
+			lkl_sys_rmdir(path);
+		else
+			lkl_sys_unlink(path);
+	}
 }
 
 static void DOKAN_CALLBACK jh_close(LPCWSTR name, PDOKAN_FILE_INFO info)
 {
 	(void)name;
-	if (info->Context) {
-		lkl_sys_close((int)info->Context);
+	if (HAS_FD(info)) {
+		lkl_sys_close(FD_OF(info));
 		info->Context = 0;
 	}
+}
+
+static int open_for(LPCWSTR name, int flags, int *opened)
+{
+	char path[LKL_PATH_MAX];
+	long ret;
+	*opened = 0;
+	if (to_lkl_path(name, path, sizeof(path)) < 0)
+		return -LKL_ENOENT;
+	ret = lkl_sys_open(path, flags, 0);
+	if (ret >= 0)
+		*opened = 1;
+	return (int)ret;
 }
 
 static NTSTATUS DOKAN_CALLBACK jh_read(LPCWSTR name, LPVOID buffer, DWORD length,
 				       LPDWORD read, LONGLONG offset, PDOKAN_FILE_INFO info)
 {
-	char path[LKL_PATH_MAX];
-	int fd = (int)info->Context, opened = 0;
+	int opened = 0, fd = HAS_FD(info) ? FD_OF(info) : open_for(name, LKL_O_RDONLY, &opened);
 	long ret;
 
 	*read = 0;
-	if (!fd) {
-		/* Windows can read through a handle we never opened, during
-		 * paging in particular. */
-		if (to_lkl_path(name, path, sizeof(path)) < 0)
-			return STATUS_OBJECT_NAME_INVALID;
-		ret = lkl_sys_open(path, LKL_O_RDONLY, 0);
-		if (ret < 0)
-			return from_lkl(ret);
-		fd = (int)ret;
-		opened = 1;
-	}
+	if (fd < 0)
+		return from_lkl(fd);
 	ret = lkl_sys_pread64(fd, buffer, length, offset);
 	if (ret >= 0)
 		*read = (DWORD)ret;
 	if (opened)
 		lkl_sys_close(fd);
 	return ret < 0 ? from_lkl(ret) : STATUS_SUCCESS;
+}
+
+static NTSTATUS DOKAN_CALLBACK jh_write(LPCWSTR name, LPCVOID buffer, DWORD length,
+					LPDWORD written, LONGLONG offset, PDOKAN_FILE_INFO info)
+{
+	int opened = 0, fd = HAS_FD(info) ? FD_OF(info) : open_for(name, LKL_O_WRONLY, &opened);
+	struct lkl_stat st;
+	long ret;
+
+	*written = 0;
+	if (!read_write)
+		return STATUS_MEDIA_WRITE_PROTECTED;
+	if (fd < 0)
+		return from_lkl(fd);
+	if (info->WriteToEndOfFile) {
+		if (lkl_sys_fstat(fd, &st) < 0) {
+			if (opened) lkl_sys_close(fd);
+			return STATUS_IO_DEVICE_ERROR;
+		}
+		offset = st.st_size;
+	}
+	ret = lkl_sys_pwrite64(fd, buffer, length, offset);
+	if (ret >= 0)
+		*written = (DWORD)ret;
+	if (opened)
+		lkl_sys_close(fd);
+	return ret < 0 ? from_lkl(ret) : STATUS_SUCCESS;
+}
+
+/* FlushFileBuffers from a Windows program -- SQLite's and PostgreSQL's
+ * commit, a careful program's save. It becomes fsync inside the kernel,
+ * which now reaches the disk (docs/0c-step1-flush-proof.md). If this ever
+ * returns success without the fsync, a pulled drive loses "saved" data. */
+static NTSTATUS DOKAN_CALLBACK jh_flush(LPCWSTR name, PDOKAN_FILE_INFO info)
+{
+	int opened = 0, fd = HAS_FD(info) ? FD_OF(info) : open_for(name, LKL_O_RDONLY, &opened);
+	long ret;
+	if (fd < 0)
+		return from_lkl(fd);
+	ret = lkl_sys_fsync(fd);
+	if (opened)
+		lkl_sys_close(fd);
+	return from_lkl(ret);
+}
+
+static NTSTATUS DOKAN_CALLBACK jh_set_end(LPCWSTR name, LONGLONG length, PDOKAN_FILE_INFO info)
+{
+	int opened = 0, fd = HAS_FD(info) ? FD_OF(info) : open_for(name, LKL_O_WRONLY, &opened);
+	long ret;
+	if (!read_write)
+		return STATUS_MEDIA_WRITE_PROTECTED;
+	if (fd < 0)
+		return from_lkl(fd);
+	ret = lkl_sys_ftruncate(fd, length);
+	if (opened)
+		lkl_sys_close(fd);
+	return from_lkl(ret);
+}
+
+/* Windows preallocates; ext4 does not need it. Only shrinking matters. */
+static NTSTATUS DOKAN_CALLBACK jh_set_allocation(LPCWSTR name, LONGLONG length, PDOKAN_FILE_INFO info)
+{
+	int opened = 0, fd = HAS_FD(info) ? FD_OF(info) : open_for(name, LKL_O_WRONLY, &opened);
+	struct lkl_stat st;
+	long ret = 0;
+	if (!read_write)
+		return STATUS_MEDIA_WRITE_PROTECTED;
+	if (fd < 0)
+		return from_lkl(fd);
+	if (lkl_sys_fstat(fd, &st) == 0 && length < st.st_size)
+		ret = lkl_sys_ftruncate(fd, length);
+	if (opened)
+		lkl_sys_close(fd);
+	return from_lkl(ret);
+}
+
+static NTSTATUS DOKAN_CALLBACK jh_set_attributes(LPCWSTR name, DWORD attributes, PDOKAN_FILE_INFO info)
+{
+	/* Windows' read-only, hidden and archive bits have no ext4 meaning;
+	 * accepting them is what keeps Windows programs from failing a save. */
+	(void)name; (void)attributes; (void)info;
+	return read_write ? STATUS_SUCCESS : STATUS_MEDIA_WRITE_PROTECTED;
+}
+
+static NTSTATUS DOKAN_CALLBACK jh_set_time(LPCWSTR name, CONST FILETIME *created,
+					   CONST FILETIME *accessed, CONST FILETIME *written,
+					   PDOKAN_FILE_INFO info)
+{
+	char path[LKL_PATH_MAX];
+	struct __lkl__kernel_timespec times[2];
+	(void)created; (void)info;
+	if (!read_write)
+		return STATUS_MEDIA_WRITE_PROTECTED;
+	if (to_lkl_path(name, path, sizeof(path)) < 0)
+		return STATUS_OBJECT_NAME_INVALID;
+	for (int i = 0; i < 2; i++) {
+		const FILETIME *t = i == 0 ? accessed : written;
+		if (!t || (t->dwLowDateTime == 0 && t->dwHighDateTime == 0)) {
+			times[i].tv_sec = 0;
+			times[i].tv_nsec = JH_UTIME_OMIT;
+			continue;
+		}
+		long long ticks = ((long long)t->dwHighDateTime << 32) | t->dwLowDateTime;
+		times[i].tv_sec = ticks / 10000000LL - 11644473600LL;
+		times[i].tv_nsec = (ticks % 10000000LL) * 100;
+	}
+	return from_lkl(lkl_sys_utimensat(LKL_AT_FDCWD, path, times, 0));
+}
+
+/* Deletion is only checked here; it happens in Cleanup. */
+static NTSTATUS DOKAN_CALLBACK jh_delete_file(LPCWSTR name, PDOKAN_FILE_INFO info)
+{
+	(void)name; (void)info;
+	return read_write ? STATUS_SUCCESS : STATUS_MEDIA_WRITE_PROTECTED;
+}
+
+static NTSTATUS DOKAN_CALLBACK jh_delete_directory(LPCWSTR name, PDOKAN_FILE_INFO info)
+{
+	char path[LKL_PATH_MAX];
+	struct lkl_dir *dir;
+	struct lkl_linux_dirent64 *entry;
+	int error = 0, empty = 1;
+	(void)info;
+	if (!read_write)
+		return STATUS_MEDIA_WRITE_PROTECTED;
+	if (to_lkl_path(name, path, sizeof(path)) < 0)
+		return STATUS_OBJECT_NAME_INVALID;
+	dir = lkl_opendir(path, &error);
+	if (!dir)
+		return from_lkl(-error);
+	while ((entry = lkl_readdir(dir)))
+		if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, "..")) {
+			empty = 0;
+			break;
+		}
+	lkl_closedir(dir);
+	return empty ? STATUS_SUCCESS : STATUS_DIRECTORY_NOT_EMPTY;
+}
+
+/* Rename. ext4's rename is atomic, which is exactly what the
+ * write-temp-then-rename pattern every careful saver uses depends on. */
+static NTSTATUS DOKAN_CALLBACK jh_move(LPCWSTR from, LPCWSTR to, BOOL replace, PDOKAN_FILE_INFO info)
+{
+	char a[LKL_PATH_MAX], b[LKL_PATH_MAX];
+	struct lkl_stat st;
+	(void)info;
+	if (!read_write)
+		return STATUS_MEDIA_WRITE_PROTECTED;
+	if (to_lkl_path(from, a, sizeof(a)) < 0 || to_lkl_path(to, b, sizeof(b)) < 0)
+		return STATUS_OBJECT_NAME_INVALID;
+	if (!replace && lkl_sys_stat(b, &st) == 0)
+		return STATUS_OBJECT_NAME_COLLISION;
+	long ret = lkl_sys_rename(a, b);
+	if (ret < 0)
+		return from_lkl(ret);
+	/*
+	 * Make the rename itself durable before saying it happened.
+	 *
+	 * On Linux a careful saver writes a temp file, fsyncs it, renames it over
+	 * the old one and then fsyncs the folder, and only then is the new
+	 * version safe from a pull. Windows has no way for a program to fsync a
+	 * folder, so that last step can never arrive. Measured in the 0b
+	 * harness: an acknowledged replace came back as the previous version
+	 * after the drive was pulled. Doing the folder fsync here gives every
+	 * Windows program the guarantee careful Linux programs give themselves.
+	 * It costs one journal commit per rename, which a single owner's agent
+	 * never notices.
+	 */
+	char *slash = strrchr(b, '/');
+	if (slash && slash != b) {
+		*slash = '\0';
+		long dir = lkl_sys_open(b, LKL_O_RDONLY | LKL_O_DIRECTORY, 0);
+		*slash = '/';
+		if (dir >= 0) {
+			ret = lkl_sys_fsync((int)dir);
+			lkl_sys_close((int)dir);
+			if (ret < 0)
+				return from_lkl(ret);
+		}
+	}
+	return STATUS_SUCCESS;
 }
 
 static NTSTATUS DOKAN_CALLBACK jh_get_info(LPCWSTR name, LPBY_HANDLE_FILE_INFORMATION out,
@@ -310,8 +557,18 @@ static NTSTATUS DOKAN_CALLBACK jh_unmounted(PDOKAN_FILE_INFO info)
 
 static DOKAN_OPERATIONS operations = {
 	.ZwCreateFile = jh_create,
+	.Cleanup = jh_cleanup,
 	.CloseFile = jh_close,
 	.ReadFile = jh_read,
+	.WriteFile = jh_write,
+	.FlushFileBuffers = jh_flush,
+	.SetEndOfFile = jh_set_end,
+	.SetAllocationSize = jh_set_allocation,
+	.SetFileAttributes = jh_set_attributes,
+	.SetFileTime = jh_set_time,
+	.DeleteFile = jh_delete_file,
+	.DeleteDirectory = jh_delete_directory,
+	.MoveFile = jh_move,
 	.GetFileInformation = jh_get_info,
 	.FindFiles = jh_find,
 	.GetDiskFreeSpace = jh_free_space,
