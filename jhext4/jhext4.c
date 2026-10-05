@@ -47,17 +47,163 @@ static struct lkl_disk disk;
 static char mount_in_lkl[64];
 static int read_write;
 static volatile LONG flush_count;
+static volatile LONG drive_gone;
+static volatile LONG stop_requested;
 static struct lkl_dev_blk_ops counting_ops;
+static HANDLE wake_event, unmounted_event;
+static const char *status_path;
+static wchar_t mount_w[64];
+
+/*
+ * Exit codes, so whatever started this program can tell what happened without
+ * reading prose. The supervisor needs "the drive was taken away" to be a
+ * different answer from "this program failed", because the first means stop the
+ * agent and wait, and the second means something is wrong with the drive's
+ * software.
+ */
+#define JH_EXIT_OK	 0
+#define JH_EXIT_FAILED	 1
+#define JH_EXIT_REMOVED	10
+
+/* Once the drive is gone, answer every request with the error Windows has for
+ * exactly this, rather than letting it down into a filesystem whose disk is no
+ * longer there. Programs then get "the device was removed" instead of a
+ * puzzling I/O error, and nothing waits on a disk that cannot answer. */
+#define JH_IF_GONE() do { if (drive_gone) return STATUS_DEVICE_REMOVED; } while (0)
+
+/* The one line of state anything outside this program can read. It goes on the
+ * host, never on the drive: at the moment it matters most, the drive is gone. */
+static void write_status(const char *state)
+{
+	FILE *out;
+
+	if (!status_path)
+		return;
+	out = fopen(status_path, "w");
+	if (!out)
+		return;
+	fprintf(out, "{\"state\":\"%s\",\"mount\":\"%ls\",\"flushes\":%ld,\"pid\":%lu}\n",
+		state, mount_w, (long)flush_count, (unsigned long)GetCurrentProcessId());
+	fclose(out);
+}
 
 /* ---------------------------------------------------------------- plumbing */
 
+/*
+ * Has the drive been taken away, as opposed to one request failing?
+ *
+ * Windows has a specific set of errors for "the device you were talking to is
+ * not there any more". A bad sector or a busy disk is not one of them, and must
+ * not be reported as a pull: a drive that is still plugged in should keep
+ * working, and ext4 will remount itself read-only if its own writes fail.
+ */
+static int device_is_gone(void)
+{
+	GET_LENGTH_INFORMATION length;
+	DWORD got, error;
+
+	if (DeviceIoControl(disk.handle, IOCTL_DISK_GET_LENGTH_INFO, NULL, 0,
+			    &length, sizeof(length), &got, NULL))
+		return 0;
+	error = GetLastError();
+	switch (error) {
+	case ERROR_DEVICE_NOT_CONNECTED:
+	case ERROR_NO_SUCH_DEVICE:
+	case ERROR_DEV_NOT_EXIST:
+	case ERROR_FILE_NOT_FOUND:
+	case ERROR_INVALID_HANDLE:
+	case ERROR_NOT_READY:
+	case ERROR_UNRECOGNIZED_VOLUME:
+		return 1;
+	default:
+		/* An image file answers this call with ERROR_INVALID_FUNCTION,
+		 * so a file-backed disk is never mistaken for a vanished one. */
+		return 0;
+	}
+}
+
+/* Say so once, on the host, and ask Windows to drop the drive. Called from the
+ * thread that noticed; the mount point is removed by the watcher, because
+ * doing it inside a callback can deadlock against Dokany's own dispatch. */
+static void note_the_drive_is_gone(void)
+{
+	if (InterlockedExchange(&drive_gone, 1))
+		return;
+	fprintf(stderr, "the drive is gone: every further request will fail cleanly\n");
+	write_status("removed");
+	SetEvent(wake_event);
+}
+
+/*
+ * Give up the drive letter, either because the drive is gone or because
+ * something asked this program to stop.
+ *
+ * This runs on its own thread because DokanRemoveMountPoint must not be called
+ * from inside a callback: it waits on Dokany's own dispatch, which is what the
+ * callback is holding. Removing the mount point is what makes DokanMain
+ * return, so this is also how the program gets to exit at all.
+ */
+static DWORD WINAPI watch_for_removal(LPVOID unused)
+{
+	(void)unused;
+	WaitForSingleObject(wake_event, INFINITE);
+	if (drive_gone || stop_requested)
+		DokanRemoveMountPoint(mount_w);
+	return 0;
+}
+
+/*
+ * Stop cleanly when asked.
+ *
+ * There has to be a way to put the drive down without killing this program,
+ * and `dokanctl /u` is not it: measured, it does not unmount a drive mounted
+ * for one session, so before this the only way to stop was the kill -- which
+ * is the pull path, not the clean one. A console control event is the same
+ * signal Windows supervision already plans to use for the engines
+ * (CTRL_BREAK on a process group), so it is the one word this program answers
+ * to as well. The flush of everything outstanding happens in the unmount, on
+ * the main thread; this only asks for it.
+ */
+static BOOL WINAPI on_console_signal(DWORD event)
+{
+	switch (event) {
+	case CTRL_C_EVENT:
+	case CTRL_BREAK_EVENT:
+	case CTRL_CLOSE_EVENT:
+	case CTRL_LOGOFF_EVENT:
+	case CTRL_SHUTDOWN_EVENT:
+		if (!InterlockedExchange(&stop_requested, 1)) {
+			fprintf(stderr, "stopping: unmounting the drive\n");
+			SetEvent(wake_event);
+		}
+		/* Windows gives a close or shutdown handler a few seconds before it
+		 * kills the process; wait for the unmount so the journal is settled. */
+		if (event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT)
+			WaitForSingleObject(unmounted_event, 10000);
+		return TRUE;
+	default:
+		return FALSE;
+	}
+}
+
 /* Count the flushes that reach the host, so `--selftest` can state a number
- * rather than an intention, and pass every request to LKL's own handler. */
+ * rather than an intention, notice a drive that has been taken away, and pass
+ * every request to LKL's own handler. */
 static int counting_request(struct lkl_disk d, struct lkl_blk_req *req)
 {
+	int status;
+
+	if (drive_gone)
+		return LKL_DEV_BLK_STATUS_IOERR;
 	if (req->type == LKL_DEV_BLK_TYPE_FLUSH || req->type == LKL_DEV_BLK_TYPE_FLUSH_OUT)
 		InterlockedIncrement(&flush_count);
-	return lkl_dev_blk_ops.request(d, req);
+	status = lkl_dev_blk_ops.request(d, req);
+	/* Every read, write and flush passes through here, so this is the one
+	 * place that learns the drive has been pulled -- and it learns it from
+	 * the disk itself rather than from Windows telling anyone. */
+	if (status != LKL_DEV_BLK_STATUS_OK && device_is_gone())
+		note_the_drive_is_gone();
+	return status;
 }
 
 /* LKL asks the file's size, which a physical disk does not have: Windows
@@ -181,6 +327,7 @@ static NTSTATUS DOKAN_CALLBACK jh_create(LPCWSTR name, PDOKAN_IO_SECURITY_CONTEX
 					 ACCESS_MASK access, ULONG attributes, ULONG share,
 					 ULONG disposition, ULONG options, PDOKAN_FILE_INFO info)
 {
+	JH_IF_GONE();
 	char path[LKL_PATH_MAX];
 	struct lkl_stat st;
 	ACCESS_MASK generic;
@@ -304,6 +451,7 @@ static int open_for(LPCWSTR name, int flags, int *opened)
 static NTSTATUS DOKAN_CALLBACK jh_read(LPCWSTR name, LPVOID buffer, DWORD length,
 				       LPDWORD read, LONGLONG offset, PDOKAN_FILE_INFO info)
 {
+	JH_IF_GONE();
 	int opened = 0, fd = HAS_FD(info) ? FD_OF(info) : open_for(name, LKL_O_RDONLY, &opened);
 	long ret;
 
@@ -321,6 +469,7 @@ static NTSTATUS DOKAN_CALLBACK jh_read(LPCWSTR name, LPVOID buffer, DWORD length
 static NTSTATUS DOKAN_CALLBACK jh_write(LPCWSTR name, LPCVOID buffer, DWORD length,
 					LPDWORD written, LONGLONG offset, PDOKAN_FILE_INFO info)
 {
+	JH_IF_GONE();
 	int opened = 0, fd = HAS_FD(info) ? FD_OF(info) : open_for(name, LKL_O_WRONLY, &opened);
 	struct lkl_stat st;
 	long ret;
@@ -351,6 +500,7 @@ static NTSTATUS DOKAN_CALLBACK jh_write(LPCWSTR name, LPCVOID buffer, DWORD leng
  * returns success without the fsync, a pulled drive loses "saved" data. */
 static NTSTATUS DOKAN_CALLBACK jh_flush(LPCWSTR name, PDOKAN_FILE_INFO info)
 {
+	JH_IF_GONE();
 	int opened = 0, fd = HAS_FD(info) ? FD_OF(info) : open_for(name, LKL_O_RDONLY, &opened);
 	long ret;
 	if (fd < 0)
@@ -363,6 +513,7 @@ static NTSTATUS DOKAN_CALLBACK jh_flush(LPCWSTR name, PDOKAN_FILE_INFO info)
 
 static NTSTATUS DOKAN_CALLBACK jh_set_end(LPCWSTR name, LONGLONG length, PDOKAN_FILE_INFO info)
 {
+	JH_IF_GONE();
 	int opened = 0, fd = HAS_FD(info) ? FD_OF(info) : open_for(name, LKL_O_WRONLY, &opened);
 	long ret;
 	if (!read_write)
@@ -378,6 +529,7 @@ static NTSTATUS DOKAN_CALLBACK jh_set_end(LPCWSTR name, LONGLONG length, PDOKAN_
 /* Windows preallocates; ext4 does not need it. Only shrinking matters. */
 static NTSTATUS DOKAN_CALLBACK jh_set_allocation(LPCWSTR name, LONGLONG length, PDOKAN_FILE_INFO info)
 {
+	JH_IF_GONE();
 	int opened = 0, fd = HAS_FD(info) ? FD_OF(info) : open_for(name, LKL_O_WRONLY, &opened);
 	struct lkl_stat st;
 	long ret = 0;
@@ -394,6 +546,7 @@ static NTSTATUS DOKAN_CALLBACK jh_set_allocation(LPCWSTR name, LONGLONG length, 
 
 static NTSTATUS DOKAN_CALLBACK jh_set_attributes(LPCWSTR name, DWORD attributes, PDOKAN_FILE_INFO info)
 {
+	JH_IF_GONE();
 	/* Windows' read-only, hidden and archive bits have no ext4 meaning;
 	 * accepting them is what keeps Windows programs from failing a save. */
 	(void)name; (void)attributes; (void)info;
@@ -404,6 +557,7 @@ static NTSTATUS DOKAN_CALLBACK jh_set_time(LPCWSTR name, CONST FILETIME *created
 					   CONST FILETIME *accessed, CONST FILETIME *written,
 					   PDOKAN_FILE_INFO info)
 {
+	JH_IF_GONE();
 	char path[LKL_PATH_MAX];
 	struct __lkl__kernel_timespec times[2];
 	(void)created; (void)info;
@@ -428,12 +582,14 @@ static NTSTATUS DOKAN_CALLBACK jh_set_time(LPCWSTR name, CONST FILETIME *created
 /* Deletion is only checked here; it happens in Cleanup. */
 static NTSTATUS DOKAN_CALLBACK jh_delete_file(LPCWSTR name, PDOKAN_FILE_INFO info)
 {
+	JH_IF_GONE();
 	(void)name; (void)info;
 	return read_write ? STATUS_SUCCESS : STATUS_MEDIA_WRITE_PROTECTED;
 }
 
 static NTSTATUS DOKAN_CALLBACK jh_delete_directory(LPCWSTR name, PDOKAN_FILE_INFO info)
 {
+	JH_IF_GONE();
 	char path[LKL_PATH_MAX];
 	struct lkl_dir *dir;
 	struct lkl_linux_dirent64 *entry;
@@ -459,6 +615,7 @@ static NTSTATUS DOKAN_CALLBACK jh_delete_directory(LPCWSTR name, PDOKAN_FILE_INF
  * write-temp-then-rename pattern every careful saver uses depends on. */
 static NTSTATUS DOKAN_CALLBACK jh_move(LPCWSTR from, LPCWSTR to, BOOL replace, PDOKAN_FILE_INFO info)
 {
+	JH_IF_GONE();
 	char a[LKL_PATH_MAX], b[LKL_PATH_MAX];
 	struct lkl_stat st;
 	(void)info;
@@ -480,6 +637,7 @@ static NTSTATUS DOKAN_CALLBACK jh_move(LPCWSTR from, LPCWSTR to, BOOL replace, P
 static NTSTATUS DOKAN_CALLBACK jh_get_info(LPCWSTR name, LPBY_HANDLE_FILE_INFORMATION out,
 					   PDOKAN_FILE_INFO info)
 {
+	JH_IF_GONE();
 	char path[LKL_PATH_MAX];
 	struct lkl_stat st;
 	long ret;
@@ -506,6 +664,7 @@ static NTSTATUS DOKAN_CALLBACK jh_get_info(LPCWSTR name, LPBY_HANDLE_FILE_INFORM
 
 static NTSTATUS DOKAN_CALLBACK jh_find(LPCWSTR name, PFillFindData fill, PDOKAN_FILE_INFO info)
 {
+	JH_IF_GONE();
 	char path[LKL_PATH_MAX], child[LKL_PATH_MAX];
 	struct lkl_dir *dir;
 	struct lkl_linux_dirent64 *entry;
@@ -545,6 +704,7 @@ static NTSTATUS DOKAN_CALLBACK jh_find(LPCWSTR name, PFillFindData fill, PDOKAN_
 static NTSTATUS DOKAN_CALLBACK jh_free_space(PULONGLONG available, PULONGLONG total,
 					     PULONGLONG free_bytes, PDOKAN_FILE_INFO info)
 {
+	JH_IF_GONE();
 	struct lkl_statfs fs;
 	(void)info;
 	if (lkl_sys_statfs(mount_in_lkl, &fs) < 0)
@@ -579,13 +739,14 @@ static NTSTATUS DOKAN_CALLBACK jh_mounted(LPCWSTR actual, PDOKAN_FILE_INFO info)
 	(void)info;
 	fprintf(stderr, "mounted at %ls\n", actual);
 	fflush(stderr);
+	write_status("mounted");
 	return STATUS_SUCCESS;
 }
 
 static NTSTATUS DOKAN_CALLBACK jh_unmounted(PDOKAN_FILE_INFO info)
 {
 	(void)info;
-	fprintf(stderr, "unmounted (flushes that reached the disk: %ld)\n", flush_count);
+	fprintf(stderr, "unmounted (flushes that reached the disk: %ld)\n", (long)flush_count);
 	fflush(stderr);
 	return STATUS_SUCCESS;
 }
@@ -618,7 +779,9 @@ static void usage(void)
 {
 	fprintf(stderr,
 		"usage: jhext4 --disk <image|\\\\.\\PhysicalDriveN> --mount <letter or path>\n"
-		"              [--part N] [--read-write] [--serial N] [--mount-manager] [--debug]\n");
+		"              [--part N] [--read-write] [--serial N] [--mount-manager]\n"
+		"              [--status FILE] [--debug]\n"
+		"exit: 0 unmounted cleanly, 1 failed, 10 the drive was taken away\n");
 }
 
 int main(int argc, char **argv)
@@ -626,9 +789,9 @@ int main(int argc, char **argv)
 	const char *disk_path = NULL, *mount = NULL;
 	unsigned part = 0, serial = 0, debug = 0, mount_manager = 0;
 	DOKAN_OPTIONS options;
-	wchar_t mount_w[64];
 	long ret;
 	int id, status;
+	HANDLE watcher;
 
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--disk") && i + 1 < argc) disk_path = argv[++i];
@@ -645,6 +808,9 @@ int main(int argc, char **argv)
 		 * It costs the per-session privacy CURRENT_SESSION gives, so it is a
 		 * flag until Project 7 settles which the product wants. */
 		else if (!strcmp(argv[i], "--mount-manager")) mount_manager = 1;
+		/* Where to write what the drive is doing, for whatever is
+		 * supervising it. On the host: when it matters, the drive is gone. */
+		else if (!strcmp(argv[i], "--status") && i + 1 < argc) status_path = argv[++i];
 		else if (!strcmp(argv[i], "--debug")) debug = 1;
 		else { usage(); return 2; }
 	}
@@ -660,8 +826,9 @@ int main(int argc, char **argv)
 				  FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH | FILE_FLAG_NO_BUFFERING,
 				  NULL);
 	if (disk.handle == INVALID_HANDLE_VALUE) {
-		fprintf(stderr, "cannot open %s: Windows error %lu\n", disk_path, GetLastError());
-		return 1;
+		fprintf(stderr, "cannot open %s: Windows error %lu\n", disk_path,
+			(unsigned long)GetLastError());
+		return JH_EXIT_FAILED;
 	}
 	counting_ops = lkl_dev_blk_ops;
 	counting_ops.request = counting_request;
@@ -720,6 +887,19 @@ int main(int argc, char **argv)
 	options.AllocationUnitSize = 4096;
 	options.Timeout = 30000;
 
+	wake_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+	unmounted_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+	if (!wake_event || !unmounted_event) {
+		fprintf(stderr, "could not prepare the drive watch\n");
+		return JH_EXIT_FAILED;
+	}
+	watcher = CreateThread(NULL, 0, watch_for_removal, NULL, 0, NULL);
+	if (!watcher) {
+		fprintf(stderr, "could not start the drive watch\n");
+		return JH_EXIT_FAILED;
+	}
+	SetConsoleCtrlHandler(on_console_signal, TRUE);
+
 	/* Dokany 2.x needs this before a mount and the matching shutdown after.
 	 * Without it DokanMain returns success immediately and nothing is
 	 * mounted -- a silent no-op, not an error. */
@@ -732,10 +912,22 @@ int main(int argc, char **argv)
 			status == DOKAN_MOUNT_ERROR ? " (the mount point could not be assigned)" :
 			status == DOKAN_VERSION_ERROR ? " (the installed driver is a different version)" : "");
 	DokanShutdown();
+	SetEvent(wake_event);			/* release the watcher either way */
+	WaitForSingleObject(watcher, 5000);
+	CloseHandle(watcher);
 
-	lkl_umount_dev(id, part, 0, 5000);
+	/* Unmounting a drive that is not there would ask ext4 to write its
+	 * journal to a disk that cannot take it. Nothing is lost by skipping it:
+	 * what was flushed is on the drive, and the journal replays on re-plug. */
+	if (!drive_gone) {
+		lkl_umount_dev(id, part, 0, 5000);
+		write_status("unmounted");
+	}
+	SetEvent(unmounted_event);		/* a close handler may be waiting on this */
 	lkl_sys_halt();
 	lkl_cleanup();
 	CloseHandle(disk.handle);
-	return status == DOKAN_SUCCESS ? 0 : 1;
+	if (drive_gone)
+		return JH_EXIT_REMOVED;
+	return status == DOKAN_SUCCESS ? JH_EXIT_OK : JH_EXIT_FAILED;
 }
