@@ -1,0 +1,23 @@
+# LF everywhere, checked out as LF on every platform.
+#
+# This is not a style preference. The shell scripts here run in MSYS2 and in
+# Linux (through WSL, which is what judges every pull test), and bash fails on
+# a script with CRLF line endings in ways that read as a syntax error in the
+# script rather than a line-ending problem. Every script this repository sends
+# into WSL had to be filtered through `tr -d '\r'` first; pinning LF is the
+# fix for the cause.
+#
+# It also keeps diffs reviewable: a Windows editor that rewrites endings would
+# otherwise show every line of a file as changed.
+* text=auto eol=lf
+
+# Binary, so git never touches these.
+*.exe   binary
+*.dll   binary
+*.sys   binary
+*.msi   binary
+*.img   binary
+*.vhdx  binary
+*.gz    binary
+*.zip   binary
+*.pyc   binary
