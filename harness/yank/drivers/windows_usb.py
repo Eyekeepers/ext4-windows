@@ -1,11 +1,11 @@
-"""0c step 7: the workload on a real USB drive through jhext4, pulled for real.
+"""0c step 7: the workload on a real USB drive through ext4win, pulled for real.
 
-    python -m yank.drivers.windows_usb --jhext4 jhext4.exe --serial SERIAL --busid 3-2
+    python -m yank.drivers.windows_usb --program ext4win.exe --serial SERIAL --busid 3-2
            --work DIR [--pull kill|manual] [--iterations 10] [--letter N]
 
 Run from Windows, in this harness/ folder, in an administrator PowerShell:
 writing a physical disk needs it. Nothing here comes from the drive under test;
-the harness, jhext4 and Python all live on this computer.
+the harness, ext4win and Python all live on this computer.
 
 The drive is found by its USB serial every time, never by disk number, and the
 harness refuses a device that is not on the USB bus given. It must already be
@@ -14,7 +14,7 @@ iteration writes to it and then takes it away mid-write.
 
 How the drive vanishes (`--pull`):
 
-  kill    (default) jhext4 is killed outright mid-write, as in step 3, but on
+  kill    (default) ext4win is killed outright mid-write, as in step 3, but on
           real hardware: nothing more reaches the device after that moment.
           The device keeps power, so its own cache survives.
   manual  you pull the cable when told, then plug it back in when told. The
@@ -140,9 +140,9 @@ def to_wsl(serial: str, timeout: float = 90) -> None:
     raise RuntimeError("WSL did not see the drive; is a WSL window open?")
 
 
-def mount(jhext4: Path, number: int, letter: str, log: Path) -> subprocess.Popen:
+def mount(ext4win: Path, number: int, letter: str, log: Path) -> subprocess.Popen:
     stream = open(log, "ab")
-    proc = subprocess.Popen([str(jhext4), "--disk", rf"\\.\PhysicalDrive{number}", "--part", "1",
+    proc = subprocess.Popen([str(ext4win), "--disk", rf"\\.\PhysicalDrive{number}", "--part", "1",
                              "--mount", letter, "--read-write"],
                             stdout=stream, stderr=stream, stdin=subprocess.DEVNULL,
                             creationflags=subprocess.CREATE_NO_WINDOW)
@@ -151,7 +151,7 @@ def mount(jhext4: Path, number: int, letter: str, log: Path) -> subprocess.Popen
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         if proc.poll() is not None:
-            raise RuntimeError(f"jhext4 exited while mounting; see {log}")
+            raise RuntimeError(f"ext4win exited while mounting; see {log}")
         if root.exists():
             return proc
         time.sleep(0.2)
@@ -208,7 +208,7 @@ ARGS: argparse.Namespace
 def main() -> int:
     global ARGS
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--jhext4", type=Path, required=True)
+    parser.add_argument("--program", type=Path, required=True)
     parser.add_argument("--serial", required=True)
     parser.add_argument("--busid", required=True)
     parser.add_argument("--work", type=Path, required=True)
@@ -234,7 +234,7 @@ def main() -> int:
         result: dict = {"iteration": index, "pull": args.pull}
         number = to_windows(args.serial)
         result["disk"] = number
-        proc = mount(args.jhext4, number, args.letter, args.work / f"jhext4-{index}.log")
+        proc = mount(args.program, number, args.letter, args.work / f"ext4win-{index}.log")
         log = acks / f"run-{index}.jsonl"
         env = {**os.environ, "PYTHONPATH": str(harness), "PYTHONDONTWRITEBYTECODE": "1"}
         workload = subprocess.Popen(

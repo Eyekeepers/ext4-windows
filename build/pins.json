@@ -1,0 +1,41 @@
+{
+  "comment": [
+    "Everything the build is allowed to fetch, pinned. A build that resolves a",
+    "version at build time is a build whose output nobody can reproduce, and a",
+    "signed binary has to be reproducible from the commit the release records.",
+    "Move a pin deliberately, in its own commit, with the reason."
+  ],
+  "lkl": {
+    "repository": "https://github.com/lkl/linux.git",
+    "commit": "d0f76a77e8c2ca68bd7d96190b8da09040eab072",
+    "date": "2026-09-28",
+    "why": "The ext4 the drives are formatted with needs a kernel of 5.15 or newer for orphan_file; this is the LKL tree we found and fixed the three flush faults against (docs/0c-step1-flush-proof.md)."
+  },
+  "dokany": {
+    "version": "2.3.1.1000",
+    "tag": "v2.3.1.1000",
+    "repository": "https://github.com/dokan-dev/dokany",
+    "headers": {
+      "comment": "Where each header lives in Dokany's tree, and where the build wants it. They include each other by plain name, so they go flat into vendor/include and one -I covers all three.",
+      "dokan/dokan.h": "vendor/include/dokan.h",
+      "dokan/fileinfo.h": "vendor/include/fileinfo.h",
+      "sys/public.h": "vendor/include/public.h"
+    },
+    "why": "Its dokan2.sys is signed by the Microsoft Windows Hardware Compatibility Publisher, which is what removes any need for an extended-validation certificate. Verified in docs/dokany-verification.md.",
+    "note": "The headers are not in the installer and are taken from the tag. dokan2.dll comes from the installed SDK."
+  },
+  "msys2": {
+    "why": "LKL builds natively under MSYS2; both cross-builds from Linux fail (x86_64 on LLP64 long, i686 crashes in lkl_start_kernel). See docs/0c-step1-flush-proof.md.",
+    "msystem": "MSYS",
+    "packages": [
+      "gcc",
+      "make",
+      "bc",
+      "flex",
+      "bison",
+      "python",
+      "diffutils",
+      "git"
+    ]
+  }
+}

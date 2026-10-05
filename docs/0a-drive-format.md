@@ -69,5 +69,5 @@ Two things an image does not teach:
   what a drive is must read the superblock, never `lsblk`'s label.
 - **A physical disk has no file size.** `GetFileSizeEx` fails on
   `\\.\PhysicalDriveN`, which is what LKL's Windows host code asks, so the
-  drive would attach as zero bytes. `jhext4` asks the disk its length instead
+  drive would attach as zero bytes. `ext4win` asks the disk its length instead
   (`IOCTL_DISK_GET_LENGTH_INFO`) and falls back to the file size for images.

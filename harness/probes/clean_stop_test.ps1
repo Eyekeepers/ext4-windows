@@ -4,7 +4,7 @@ $log = "$sp\clean-stop.log"
 Remove-Item "$sp\jh-status.json", $log -ErrorAction SilentlyContinue
 
 $psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName = "$sp\flushproof\jhext4.exe"
+$psi.FileName = "$sp\flushproof\ext4win.exe"
 $psi.Arguments = "--disk `"$sp\regress.img`" --part 1 --mount R --read-write --status `"$sp\jh-status.json`""
 $psi.UseShellExecute = $false
 $psi.RedirectStandardOutput = $true

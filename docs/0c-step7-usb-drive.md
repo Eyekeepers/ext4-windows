@@ -32,7 +32,7 @@ step 3's image run never happened to hit:
   back. The database was not corrupt. It was correctly older than what it had
   told the program was committed.
 
-**Fix:** `jhext4` now makes every change to a folder's contents durable before
+**Fix:** `ext4win` now makes every change to a folder's contents durable before
 reporting success — delete, remove folder, create folder, and rename as before
 — in one helper (`sync_parent`). That gives Windows programs the guarantee a
 careful Linux program gives itself, since on Windows they cannot ask for it.
@@ -124,18 +124,18 @@ In an **administrator** PowerShell, because writing a raw disk requires it:
 cd <path>
 <path> -u `
   -m yank.drivers.windows_usb `
-  --jhext4 <path>\jhext4.exe --serial <serial> --busid 3-2 `
+  --program <path>\ext4win.exe --serial <serial> --busid 3-2 `
   --work <somewhere on C:> --pull kill --iterations 10
 ```
 
-Each iteration brings the stick back to Windows, mounts it through `jhext4` at
-`N:`, writes hard into a new folder, kills `jhext4` at a random moment between
+Each iteration brings the stick back to Windows, mounts it through `ext4win` at
+`N:`, writes hard into a new folder, kills `ext4win` at a random moment between
 3 and 12 seconds, hands the stick to Linux, and has Linux replay, `e2fsck -fn`
 and re-check **every** acknowledged write of **every** run so far. One line per
 iteration, `PASS` or `FAIL` with what was lost.
 
 Expect about a minute per iteration. The work folder keeps `results.jsonl` and
-one `jhext4-N.log` per run.
+one `ext4win-N.log` per run.
 
 ### 4. Manual pulls — the part only you can do
 
@@ -169,7 +169,7 @@ the whole verdict.
   right `--busid`.
 - **"WSL did not see the drive; is a WSL window open?"** — the `wsl … sleep`
   window from step 1 closed. usbipd cannot attach to a WSL that is not running.
-- **"jhext4 exited while mounting"** — read the `jhext4-N.log` in the work
+- **"ext4win exited while mounting"** — read the `ext4win-N.log` in the work
   folder. "cannot open … error 5" means the PowerShell is not elevated.
 - **A drive letter is stuck after a crash** — nothing is mounted; Dokany
   releases it when the process dies. `N:` free again is the test.

@@ -16,7 +16,7 @@ stop the program was to kill it — which is the *pull* path. A clean stop and a
 power cut were the same operation, which is not a thing a product can ship:
 every ordinary shutdown would have been recovered from rather than completed.
 
-`jhext4` now answers a **console control event** — `CTRL_BREAK`, `CTRL_C`, or
+`ext4win` now answers a **console control event** — `CTRL_BREAK`, `CTRL_C`, or
 Windows closing or shutting it down. That is deliberately the same signal
 the product's Windows supervision already plans to send the engines
 (`CTRL_BREAK_EVENT` to a process group), so the drive stops the same way
@@ -92,7 +92,7 @@ Windows ACLs, and proving another account is denied needs a second account.
 
 ## One packaging fact confirmed
 
-`jhext4.exe` **will not start** unless `msys-2.0.dll` is beside it or on the
+`ext4win.exe` **will not start** unless `msys-2.0.dll` is beside it or on the
 path — it exits `0xC0000135` (DLL not found) before printing anything. It had
 only ever been run from a shell that had MSYS2 on the path, so this was
 invisible until the program was launched the way a supervisor launches things.

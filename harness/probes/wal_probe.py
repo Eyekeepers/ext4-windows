@@ -1,4 +1,4 @@
-"""Does SQLite's WAL mode actually engage on a jhext4 mount, and do its locks work?
+"""Does SQLite's WAL mode actually engage on a ext4win mount, and do its locks work?
 
 WAL needs shared memory (the -shm file, memory-mapped) and byte-range locks.
 Hermes drops every one of its databases to journal_mode=DELETE when those fail

@@ -1,7 +1,7 @@
 # 0c step 2 — an ext4 drive as a Windows folder, read-only (passed)
 
 Measured 2026-10-03 on Windows 11 Pro x64, with **Memory Integrity (HVCI)
-running**. Program: `jhext4/jhext4.c`. Dokany 2.3.1.1000, LKL `d0f76a77e`
+running**. Program: `src/ext4win.c`. Dokany 2.3.1.1000, LKL `d0f76a77e`
 (kernel 6.12) with `patches/lkl-flush.diff`, built in MSYS2.
 
 ## What was asked of this step

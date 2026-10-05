@@ -1,12 +1,12 @@
-"""0c step 3 on Windows: the same workload, through jhext4, pulled by killing it.
+"""0c step 3 on Windows: the same workload, through ext4win, pulled by killing it.
 
-    python -m yank.drivers.windows_kill --jhext4 jhext4.exe --image drive.img
+    python -m yank.drivers.windows_kill --program ext4win.exe --image drive.img
            --work DIR [--fresh 6G] [--part 1] [--iterations 10] [--letter N]
            [--min-seconds 3 --max-seconds 12]
 
 Run from Windows, in this harness/ folder. Each iteration mounts the image
-read/write through jhext4, runs the workload into a new folder on the drive,
-and at a random moment kills jhext4 outright. The disk handle is write-through
+read/write through ext4win, runs the workload into a new folder on the drive,
+and at a random moment kills ext4win outright. The disk handle is write-through
 and unbuffered, so nothing of ours lingers in Windows' cache after the kill:
 from the disk's point of view this is the drive vanishing mid-write.
 
@@ -100,9 +100,9 @@ def fresh(image: Path, size: str) -> None:
         raise RuntimeError(f"the image could not be made: {done.stdout}{done.stderr}".strip())
 
 
-def mount(jhext4: Path, image: Path, part: int, letter: str, log: Path) -> subprocess.Popen:
+def mount(ext4win: Path, image: Path, part: int, letter: str, log: Path) -> subprocess.Popen:
     stream = open(log, "ab")
-    proc = subprocess.Popen([str(jhext4), "--disk", str(image), "--part", str(part),
+    proc = subprocess.Popen([str(ext4win), "--disk", str(image), "--part", str(part),
                              "--mount", letter, "--read-write"],
                             stdout=stream, stderr=stream, stdin=subprocess.DEVNULL,
                             creationflags=subprocess.CREATE_NO_WINDOW)
@@ -111,7 +111,7 @@ def mount(jhext4: Path, image: Path, part: int, letter: str, log: Path) -> subpr
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         if proc.poll() is not None:
-            raise RuntimeError(f"jhext4 exited while mounting; see {log}")
+            raise RuntimeError(f"ext4win exited while mounting; see {log}")
         if root.exists():
             return proc
         time.sleep(0.2)
@@ -121,7 +121,7 @@ def mount(jhext4: Path, image: Path, part: int, letter: str, log: Path) -> subpr
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--jhext4", type=Path, required=True)
+    parser.add_argument("--program", type=Path, required=True)
     parser.add_argument("--image", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--letter", default="N")
@@ -145,7 +145,7 @@ def main() -> int:
 
     for index in range(args.iterations):
         result: dict = {"iteration": index}
-        proc = mount(args.jhext4, args.image, args.part, args.letter, args.work / f"jhext4-{index}.log")
+        proc = mount(args.program, args.image, args.part, args.letter, args.work / f"ext4win-{index}.log")
         log = acks / f"run-{index}.jsonl"
         env = {**os.environ, "PYTHONPATH": str(harness), "PYTHONDONTWRITEBYTECODE": "1"}
         workload = subprocess.Popen(

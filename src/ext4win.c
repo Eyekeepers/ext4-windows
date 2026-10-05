@@ -1,7 +1,7 @@
 /*
- * jhext4 — an ext4 drive as a Windows folder, using Linux's own ext4 code.
+ * ext4win — an ext4 drive as a Windows folder, using Linux's own ext4 code.
  *
- *   jhext4.exe --disk <image or \\.\PhysicalDriveN> --mount M [--read-write]
+ *   ext4win.exe --disk <image or \\.\PhysicalDriveN> --mount M [--read-write]
  *
  * The Linux kernel's ext4 runs inside this program through LKL, and Dokany
  * presents its files to Windows. Nothing here reimplements ext4: the journal,
@@ -778,7 +778,7 @@ static DOKAN_OPERATIONS operations = {
 static void usage(void)
 {
 	fprintf(stderr,
-		"usage: jhext4 --disk <image|\\\\.\\PhysicalDriveN> --mount <letter or path>\n"
+		"usage: ext4win --disk <image|\\\\.\\PhysicalDriveN> --mount <letter or path>\n"
 		"              [--part N] [--read-write] [--serial N] [--mount-manager]\n"
 		"              [--status FILE] [--debug]\n"
 		"exit: 0 unmounted cleanly, 1 failed, 10 the drive was taken away\n");

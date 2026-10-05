@@ -1,13 +1,13 @@
 # 0c step 3 — writing from Windows, and pulling the drive (first pass)
 
 Measured 2026-10-05 on Windows 11 Pro x64 with Memory Integrity on.
-`jhext4 --read-write`, the 0b workload run by Windows' own Python,
+`ext4win --read-write`, the 0b workload run by Windows' own Python,
 `harness/yank/drivers/windows_kill.py`.
 
 ## Result: 10 of 10 pulls passed
 
 The drive was pulled at a random moment 3–12 s into heavy writing, ten times on
-the same image. "Pulled" means jhext4 was killed outright: its disk handle is
+the same image. "Pulled" means ext4win was killed outright: its disk handle is
 write-through and unbuffered, so nothing of ours is left in Windows' cache
 afterwards, which from the disk's side is the drive vanishing.
 
@@ -24,7 +24,7 @@ PostgreSQL is not in this run; its Windows build is the product's Project 4.
 
 **A rename that was acknowledged came back as the old version.** On Linux a
 careful saver fsyncs the folder after the rename; Windows gives programs no way
-to do that. jhext4 now fsyncs the parent folder inside every rename before
+to do that. ext4win now fsyncs the parent folder inside every rename before
 reporting success, so Windows programs get the guarantee careful Linux
 programs give themselves. One journal commit per rename.
 

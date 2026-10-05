@@ -3,7 +3,7 @@
 Step 8 asks for hours of the workload with random pulls and zero failures of
 the pass criteria.
 
-Measured 2026-10-05, Windows 11 Pro x64, `jhext4 --read-write` on a 3 GiB image
+Measured 2026-10-05, Windows 11 Pro x64, `ext4win --read-write` on a 3 GiB image
 laid out as `prepare_drive.sh` lays out a drive (GPT, one partition), pulled by
 killing the program at a random moment 2–20 s into heavy writing.
 

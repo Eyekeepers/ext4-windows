@@ -13,7 +13,7 @@ Measured 2026-10-05, Windows 11 Pro x64, Memory Integrity on.
 
 `GetFinalPathNameByHandle` fails. Measured through two callers:
 
-| Probe | On a jhext4 mount | On NTFS |
+| Probe | On a ext4win mount | On NTFS |
 |---|---|---|
 | Node `fs.realpathSync.native()` | `ENOENT` | the path |
 | Python `nt._getfinalpathname()` | `ERROR_FILE_NOT_FOUND` | the path |
