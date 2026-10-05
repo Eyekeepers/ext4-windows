@@ -38,6 +38,25 @@ for f in include/dokan.h include/fileinfo.h include/public.h lib/dokan2.dll; do
     [ -f "$vendor/$f" ] || { echo "missing vendor/$f -- see build/pins.json" >&2; exit 1; }
 done
 
+# LKL needs its own patched assembler and linker on Windows (tools/lkl/bin;
+# its CI copies them over MSYS2's). With the stock ones everything compiles and
+# links without complaint, and the program then crashes on start before the
+# kernel prints a line -- which is how v0.1.0 shipped. So check the tools gcc
+# will actually invoke, not the ones on PATH: gcc runs its own target-prefixed
+# copies, and those are what have to match.
+echo "== LKL's patched binutils"
+for tool in as ld; do
+    used=$(gcc -print-prog-name="$tool")
+    case "$used" in /*) ;; *) used=$(command -v "$used") ;; esac
+    if ! cmp -s "$lkl/tools/lkl/bin/$tool.exe" "$used"; then
+        echo "gcc would use $used, which is not LKL's patched $tool." >&2
+        echo "Run:  cp -f $lkl/tools/lkl/bin/*.exe /usr/bin/" >&2
+        echo "(A stock $tool builds without error and the program crashes on start.)" >&2
+        exit 1
+    fi
+    echo "  $tool: $used is LKL's patched copy"
+done
+
 echo "== source"
 cp -f "$root/src/ext4win.c" "$target/tests/ext4win.c"
 

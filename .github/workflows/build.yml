@@ -82,6 +82,16 @@ jobs:
           git checkout --quiet FETCH_HEAD
           echo "LKL at $(git rev-parse HEAD)"
 
+      # LKL ships its own patched assembler and linker for Windows in
+      # tools/lkl/bin, and its own CI copies them over MSYS2's before building.
+      # With the stock binutils the build succeeds without a single error and
+      # the program then crashes on start, inside LKL, before the kernel prints
+      # a line. v0.1.0 was built that way and published. build.sh now refuses a
+      # stock linker, and the smoke test below boots the kernel, so neither half
+      # of that can recur silently.
+      - name: Install LKL's patched binutils, as LKL's own CI does
+        run: cp -f lkl/tools/lkl/bin/*.exe /usr/bin/
+
       - name: Teach LKL to pass a flush through to the disk
         run: |
           # Three faults, each of which silently lost every "save now"
@@ -92,11 +102,35 @@ jobs:
       - name: Build
         run: bash build/build.sh
 
+      # Printing the usage proves nothing: that path never touches LKL. Point the
+      # program at a zero-filled disk instead. A build that works boots the
+      # kernel, asks it to mount, and is refused -- exit 1, "could not be
+      # mounted as ext4". A broken build dies before the kernel says anything.
+      # The runner has no Dokany driver, and does not need it: the mount is
+      # refused before Dokany is ever asked for a drive letter.
+      - name: Smoke test -- does the Linux kernel actually start?
+        run: |
+          cd out
+          # dokan2.dll only so the program can load at all; it is not shipped
+          # (the user's Dokany install provides it) and is removed again below.
+          cp ../vendor/lib/dokan2.dll .
+          head -c 67108864 /dev/zero > zero.img
+          set +e
+          ./ext4win.exe --disk zero.img --mount Z > smoke.out 2> smoke.err
+          code=$?
+          set -e
+          rm -f zero.img dokan2.dll
+          echo "exit $code"; cat smoke.err
+          if [ "$code" -ne 1 ] || ! grep -q "could not be mounted as ext4" smoke.err; then
+            echo "::error::the kernel did not start (exit $code); see docs/0c-step1-flush-proof.md on LKL's patched binutils"
+            exit 1
+          fi
+          rm -f smoke.out smoke.err
+
       - name: Checksums
         run: |
           cd out
           sha256sum ext4win.exe msys-2.0.dll | tee SHA256SUMS
-          ./ext4win.exe 2>&1 | head -5 || true   # prints its usage and exits 2
 
       - uses: actions/upload-artifact@v4
         with:
