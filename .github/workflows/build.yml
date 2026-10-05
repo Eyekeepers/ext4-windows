@@ -103,3 +103,52 @@ jobs:
           name: ext4win-windows-x64
           path: out/
           if-no-files-found: error
+
+  # A release is only ever cut from a tag, and only from a build that passed.
+  # The first releases are UNSIGNED: SignPath needs a release that already
+  # exists before it will consider the project (CODE-SIGNING-POLICY.md). The
+  # release notes say so, so nobody mistakes an unsigned build for a signed one.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ext4win-windows-x64
+          path: out/
+
+      - name: Check the artifact is what the build recorded
+        run: |
+          cd out
+          sha256sum -c SHA256SUMS
+          ls -la
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cat > notes.md <<EOF
+          # ext4win $TAG (unsigned)
+
+          **This build is not code-signed.** Windows Smart App Control and
+          SmartScreen may block it. The signed build is the one SignPath
+          publishes; check its SHA-256 against the release notes when it lands.
+
+          Built from commit \`${{ github.sha }}\` by the workflow in this
+          repository, from the pins in \`build/pins.json\`.
+
+          Requires Dokany (https://github.com/dokan-dev/dokany), installed
+          separately. Its driver is Microsoft-signed and is not included here.
+
+          SHA-256:
+          \`\`\`
+          $(cat out/SHA256SUMS)
+          \`\`\`
+          EOF
+          gh release create "$TAG" --title "ext4win $TAG (unsigned)" \
+            --notes-file notes.md --verify-tag \
+            out/ext4win.exe out/msys-2.0.dll out/SHA256SUMS
