@@ -1,0 +1,16 @@
+{
+  "mode": "stock",
+  "mount": {"writes": 1, "flushes": 0},
+  "write_then_fsync": {"writes": 10, "flushes": 0},
+  "write_then_sync": {"writes": 12, "flushes": 0},
+  "umount": {"writes": 0, "flushes": 0},
+  "total": {"writes": 23, "flushes": 0}
+}
+{
+  "mode": "flush",
+  "mount": {"writes": 1, "flushes": 1},
+  "write_then_fsync": {"writes": 10, "flushes": 2},
+  "write_then_sync": {"writes": 12, "flushes": 2},
+  "umount": {"writes": 0, "flushes": 0},
+  "total": {"writes": 23, "flushes": 5}
+}

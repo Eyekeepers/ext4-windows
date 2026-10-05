@@ -1,0 +1,51 @@
+diff --git a/tools/lkl/lib/nt-host.c b/tools/lkl/lib/nt-host.c
+index 1d643da41..26d08e9a1 100644
+--- a/tools/lkl/lib/nt-host.c
++++ b/tools/lkl/lib/nt-host.c
+@@ -337,8 +337,13 @@ static int blk_request(struct lkl_disk disk, struct lkl_blk_req *req)
+ 	case LKL_DEV_BLK_TYPE_FLUSH:
+ 	case LKL_DEV_BLK_TYPE_FLUSH_OUT:
+ 		ret = FlushFileBuffers(disk.handle);
++		/*
++		 * -1, not 1: the only test below is `err < 0`, so a failed flush
++		 * was reported to the guest as success, and ext4 would commit its
++		 * journal believing earlier writes had landed.
++		 */
+ 		if (!ret)
+-			err = 1;
++			err = -1;
+ 		break;
+ 	default:
+ 		return LKL_DEV_BLK_STATUS_UNSUP;
+diff --git a/tools/lkl/lib/virtio_blk.c b/tools/lkl/lib/virtio_blk.c
+index d8bf38bf8..6015e1671 100644
+--- a/tools/lkl/lib/virtio_blk.c
++++ b/tools/lkl/lib/virtio_blk.c
+@@ -28,7 +28,13 @@ static int blk_enqueue(struct virtio_dev *dev, int q, struct virtio_req *req)
+ 	struct virtio_blk_req_trailer *t;
+ 	struct lkl_blk_req lkl_req;
+ 
+-	if (req->buf_count < 3) {
++	/*
++	 * A flush carries no data, so the guest sends two descriptors: the
++	 * header and the status byte. Demanding three dropped every flush, and
++	 * with it ext4's journal barriers and every fsync. Read and write still
++	 * need their data descriptor, checked below once the type is known.
++	 */
++	if (req->buf_count < 2) {
+ 		lkl_printf("virtio_blk: no status buf\n");
+ 		goto out;
+ 	}
+@@ -55,6 +61,12 @@ static int blk_enqueue(struct virtio_dev *dev, int q, struct virtio_req *req)
+ 	lkl_req.buf = &req->buf[1];
+ 	lkl_req.count = req->buf_count - 2;
+ 
++	if (req->buf_count < 3 && lkl_req.type != LKL_DEV_BLK_TYPE_FLUSH &&
++	    lkl_req.type != LKL_DEV_BLK_TYPE_FLUSH_OUT) {
++		lkl_printf("virtio_blk: no data buf\n");
++		goto out;
++	}
++
+ 	t->status = blk_dev->ops->request(blk_dev->disk, &lkl_req);
+ 
+ out:

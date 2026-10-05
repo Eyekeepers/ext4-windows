@@ -1,0 +1,8 @@
+vendor/
+*.exe
+*.msi
+*.dll
+*.sys
+*.img
+*.vhdx
+__pycache__/
