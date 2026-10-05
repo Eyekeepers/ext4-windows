@@ -60,9 +60,17 @@ without fault 1 fixed, no flush is ever sent, so neither can fire.
 ## Build notes, so this can be repeated
 
 - **Build on Windows in MSYS2** (the `MSYS` environment, not `MINGW64`), which
-  is the only route LKL's own CI tests. Installed at `<path>`,
-  no administrator rights, and `pacman -S base-devel gcc git bc python-pip
-  dosfstools` as its CI does.
+  is the only route LKL's own CI tests. It installs into the user's profile
+  with no administrator rights; then `pacman -S base-devel gcc git bc
+  python-pip dosfstools` as its CI does.
+- **Install LKL's patched binutils over MSYS2's:** `cp -f tools/lkl/bin/*.exe
+  /usr/bin/`, exactly as LKL's own CI does. This was done by hand when the
+  build first worked and then left out of these notes, so v0.1.0 was built
+  with stock binutils: it compiled and linked without a single error, and the
+  program crashed on start inside LKL before the kernel printed a line (exit
+  `0x0B00`, no output). `build/build.sh` now refuses a stock assembler or
+  linker, and CI boots the kernel as a smoke test, so the omission cannot ship
+  again.
 - **Do not cross-compile from Linux.** Both routes were tried and both fail:
   - **x86_64 mingw** cannot build the kernel at all. Windows makes `long` 32
     bits where Linux assumes 64, so the kernel's own consistency checks fail
