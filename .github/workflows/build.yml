@@ -172,6 +172,9 @@ jobs:
           SmartScreen may block it. The signed build is the one SignPath
           publishes; check its SHA-256 against the release notes when it lands.
 
+          Free code signing provided by SignPath.io, certificate by SignPath
+          Foundation. See CODE-SIGNING-POLICY.md in this repository.
+
           Built from commit \`${{ github.sha }}\` by the workflow in this
           repository, from the pins in \`build/pins.json\`.
 

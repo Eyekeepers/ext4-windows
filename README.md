@@ -123,4 +123,12 @@ against its source.
 Linux kernel's ext4 code, so the combined work carries the kernel's licence.
 Components and their terms are in [ATTRIBUTION.md](ATTRIBUTION.md).
 
-Code signing: [CODE-SIGNING-POLICY.md](CODE-SIGNING-POLICY.md).
+## Code signing
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate
+by [SignPath Foundation](https://signpath.org). Windows names *SignPath
+Foundation* as the publisher of a signed release. What a signature does and
+does not promise, who approves each signing, and how to check a release
+yourself are in [CODE-SIGNING-POLICY.md](CODE-SIGNING-POLICY.md).
+
+Releases marked **unsigned** were published before signing was in place.
