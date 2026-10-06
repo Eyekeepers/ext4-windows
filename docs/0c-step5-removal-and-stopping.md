@@ -17,10 +17,10 @@ power cut were the same operation, which is not a thing a product can ship:
 every ordinary shutdown would have been recovered from rather than completed.
 
 `ext4win` now answers a **console control event** — `CTRL_BREAK`, `CTRL_C`, or
-Windows closing or shutting it down. That is deliberately the same signal
-the product's Windows supervision already plans to send the engines
-(`CTRL_BREAK_EVENT` to a process group), so the drive stops the same way
-everything else on the drive stops, rather than needing a mechanism of its own.
+Windows closing or shutting it down. That is deliberately the signal Windows
+process supervisors already send console programs (`CTRL_BREAK_EVENT` to a
+process group), so the drive can be stopped the same way as the programs using
+it, rather than needing a mechanism of its own.
 
 Measured end to end:
 

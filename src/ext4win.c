@@ -802,11 +802,11 @@ int main(int argc, char **argv)
 		/* Register the drive letter with Windows' mount manager rather than
 		 * assigning it ourselves. Without it the drive works for ordinary file
 		 * calls but Windows cannot map the letter back to a volume, so
-		 * GetFinalPathNameByHandle fails -- and OpenClaw reads that failure as
-		 * "this database is on network storage" and drops SQLite to
+		 * GetFinalPathNameByHandle fails -- and software such as OpenClaw reads that
+		 * failure as "this database is on network storage" and drops SQLite to
 		 * journal_mode=DELETE. Measured in docs/0c-step4-ownership-and-paths.md.
 		 * It costs the per-session privacy CURRENT_SESSION gives, so it is a
-		 * flag until Project 7 settles which the product wants. */
+		 * flag until it is settled which of the two users need. */
 		else if (!strcmp(argv[i], "--mount-manager")) mount_manager = 1;
 		/* Where to write what the drive is doing, for whatever is
 		 * supervising it. On the host: when it matters, the drive is gone. */

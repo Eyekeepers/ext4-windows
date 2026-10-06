@@ -5,9 +5,9 @@
                  [--size 2G] [--min-seconds 3] [--max-seconds 15]
 
 Root, because it attaches and detaches block devices; the workload and the
-verifier run as an ordinary account, as the agent's own programs do.
+verifier run as an ordinary account, as ordinary programs do.
 
-The drive is an image file formatted exactly as the product's prepare_drive.sh
+The drive is an image file formatted exactly as docs/0a-drive-format.md
 formats a real one. Each iteration mounts it, runs the workload into a new
 folder, and at a random moment pulls the disk:
 
@@ -55,7 +55,7 @@ class Disk:
         self.loop = ""
 
     def create(self, size: str) -> None:
-        """prepare_drive.sh:121 and :134, with an image in place of the device."""
+        """docs/0a-drive-format.md's two commands, with an image in place of the device."""
         self.image.unlink(missing_ok=True)
         run("truncate", "-s", size, str(self.image))
         run("parted", "-s", "--", str(self.image), "mklabel", "gpt", "mkpart", "primary", "ext4", "1MiB", "100%")

@@ -5,9 +5,8 @@ real device, because an image cannot answer two questions: whether the *device*
 keeps what it said it kept when its power is cut, and whether anything in the
 chain between Windows and the drive holds data of its own.
 
-The drive is a spare 29.3 GB flash stick, serial `<serial>`, formatted
-2026-10-05 as `tools/prepare_drive.sh` formats a drive. **No other drive is
-used at any point.** The harness finds the drive by that serial every time and
+The drive is a spare 29.3 GB flash stick, formatted 2026-10-05 with the
+commands in `0a-drive-format.md`. The harness finds the drive by its USB serial every time and
 refuses to run against anything else, so a wrong disk number cannot send it at
 the wrong drive.
 
@@ -36,13 +35,11 @@ step 3's image run never happened to hit:
 reporting success — delete, remove folder, create folder, and rename as before
 — in one helper (`sync_parent`). That gives Windows programs the guarantee a
 careful Linux program gives itself, since on Windows they cannot ask for it.
-It costs one journal commit per such change, which a single owner's agent never
-notices.
+It costs one journal commit per such change, which an ordinary desktop
+workload never notices.
 
-This is a finding for the product's Windows durability inventory (2a), not only
-for this program: **on Windows, any database that commits by removing a file is
-exposed unless the filesystem closes the gap.** The engines' own SQLite
-settings are inventoried in `docs/WINDOWS-DURABILITY.md` on the the product side.
+The finding is wider than this program: **on Windows, any database that
+commits by removing a file is exposed unless the filesystem closes the gap.**
 
 Reformatted after the fix for a clean start; the ten-pull rerun is pending.
 
@@ -56,8 +53,8 @@ Reformatted after the fix for a clean start; the ten-pull rerun is pending.
 
 ## Walkthrough: running the pull tests yourself on Windows
 
-Everything below runs on this PC. Nothing touches a other drive, and nothing
-needs the internet.
+Everything below runs on one Windows PC and needs no internet connection.
+Use a drive you can afford to erase: every step writes to it.
 
 ### What has to be true first
 
@@ -74,9 +71,9 @@ In any PowerShell window:
 Get-Disk | Select-Object Number, FriendlyName, SerialNumber, Size, BusType
 ```
 
-The stick is the one whose `SerialNumber` is `<serial>`. A 238.5 GB
-`another USB drive` in that list is a **other drive** — leave it alone; the
-harness will refuse it anyway.
+Note your test drive's `SerialNumber`; every command below names the drive by
+it. The harness refuses any drive that is not on the USB bus or is 40 GB or
+larger, so a typo cannot reach another disk.
 
 ### 1. Hand the stick to Linux, so Linux can format and judge it
 
@@ -106,7 +103,7 @@ before it starts.
 
 ### 2. Format it (only when starting fresh)
 
-This erases the stick. It is the same two commands `prepare_drive.sh` runs, and
+This erases the stick. It is the same two commands as `0a-drive-format.md`, and
 the script refuses any device that is not USB, under 40 GB and that serial:
 
 ```powershell
@@ -121,8 +118,8 @@ wsl -d Ubuntu -u root -e bash /tmp/fs.sh
 In an **administrator** PowerShell, because writing a raw disk requires it:
 
 ```powershell
-cd <path>
-<path> -u `
+cd <this repository>\harness
+python -u `
   -m yank.drivers.windows_usb `
   --program <path>\ext4win.exe --serial <serial> --busid 3-2 `
   --work <somewhere on C:> --pull kill --iterations 10

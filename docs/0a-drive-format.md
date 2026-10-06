@@ -1,16 +1,16 @@
-# 0a — what a drive's ext4 looks like
+# 0a — the ext4 this program is built against
 
-Recorded 2026-10-02. No other drive was read: a drive's format is decided by
+Recorded 2026-10-02. A drive's format is decided by
 the computer that formatted it, and older formatting only ever has *fewer*
 features than newer, so supporting the newest defaults supports every drive.
 
 ## How a drive is made
 
-the product's `tools/prepare_drive.sh` does, on a Linux computer:
+The drives this program was first written for are made on a Linux computer with:
 
 ```
 parted -s -- <device> mklabel gpt mkpart primary ext4 1MiB 100%
-mkfs.ext4 -F -L EXT4TEST -- <partition>
+mkfs.ext4 -F -L <label> -- <partition>
 ```
 
 No feature options are passed, so the features are that computer's
@@ -27,7 +27,7 @@ WSL2 Ubuntu: parted 3.6, e2fsprogs 1.47.2 (2025-01-01), kernel
 | Partition table | GPT, one partition from 1 MiB to the end |
 | Partition type GUID | `0fc63daf-8483-4772-8e79-3d69d8477de4` (Linux filesystem data) |
 | Partition name | `primary` |
-| Filesystem label | `EXT4TEST` |
+| Filesystem label | whatever `-L` was given |
 | Features | `has_journal ext_attr resize_inode dir_index orphan_file filetype extent 64bit flex_bg metadata_csum_seed sparse_super large_file huge_file dir_nlink extra_isize metadata_csum` |
 | Flags | `signed_directory_hash` |
 | Default mount options | `user_xattr acl` |
@@ -46,8 +46,8 @@ WSL2 Ubuntu: parted 3.6, e2fsprogs 1.47.2 (2025-01-01), kernel
   Linux filesystem data, so it gets no letter and no "format this disk"
   prompt. To be observed directly in 0c step 2, when a VHDX made this way is
   attached to Windows.
-- **The ext4 UUID** (needed for the product's licence identity on Windows) is in
-  the superblock, which the program reads anyway.
+- **The ext4 UUID**, a stable identity for the drive whatever letter Windows
+  gives it, is in the superblock, which the program reads anyway.
 
 ## Confirmed on real hardware
 
@@ -64,8 +64,8 @@ Two things an image does not teach:
 
 - **`lsblk` keeps showing the old label.** After the stick was reformatted it
   still read `LINUX MINT` in `lsblk` while `blkid -p` on the partition read
-  `EXT4TEST`. The stale answer is udev's cache on a USB bridge, which
-  `prepare_drive.sh:137` already has a comment about. Anything that decides
+  the new label. The stale answer is udev's cache on a USB bridge, which
+  is a known source of stale answers. Anything that decides
   what a drive is must read the superblock, never `lsblk`'s label.
 - **A physical disk has no file size.** `GetFileSizeEx` fails on
   `\\.\PhysicalDriveN`, which is what LKL's Windows host code asks, so the

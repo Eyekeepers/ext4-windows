@@ -12,7 +12,7 @@ software never made is not one the drive owes it:
   credential        written once, fsync'd, with its folder: must always be intact
   replace/durable   temp file, fsync, rename, fsync the folder: acknowledged
                     versions must survive
-  replace/app       temp file, fsync, rename (the product's integration.write_text):
+  replace/app       temp file, fsync, rename (how careful apps save):
                     the file must be a whole version, never torn
   replace/none      temp file, rename, no fsync at all (seed.py's _write, and
                     most Node code): the file must still never be empty or torn
@@ -121,7 +121,7 @@ class Workload:
             # Say so if the mode did not take. SQLite answers a journal_mode it
             # refused with the mode it kept instead rather than failing, so a run
             # can believe it is testing WAL while testing DELETE -- which is the
-            # mode Hermes itself falls back to, and the dangerous one on Windows.
+            # mode programs fall back to when WAL fails, and the dangerous one on Windows.
             got = connection.execute("PRAGMA journal_mode").fetchone()[0]
             if got.lower() != mode.lower():
                 raise RuntimeError(f"{name}: asked for journal_mode={mode}, this filesystem gave {got}")

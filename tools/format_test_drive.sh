@@ -1,16 +1,16 @@
 #!/bin/bash
 #
-# Format the spare test drive as the product's own tools/prepare_drive.sh formats a
-# drive, for the pull tests. Run as root in Linux (WSL, with the drive attached
+# Format the spare test drive as docs/0a-drive-format.md formats a drive, for
+# the pull tests. Run as root in Linux (WSL, with the drive attached
 # through usbipd):
 #
 #     JH_TEST_SERIAL=<the spare drive's USB serial> bash format_test_drive.sh
 #
 # It erases the drive. It finds the drive by that serial and nothing else --
 # not by device name and not by drive number, both of which move between plugs
-# -- and refuses anything that is not on the USB bus or is 40 GB or larger. A
-# other drive is therefore out of reach of a typo: naming one would mean
-# typing its serial in deliberately.
+# -- and refuses anything that is not on the USB bus or is 40 GB or larger, so
+# another disk is out of reach of a typo: naming one would mean typing its
+# serial in deliberately.
 #
 # lsblk's label is not read anywhere here, and must not be: on a USB bridge it
 # keeps answering with the old label after a format (see docs/0a-drive-format.md).
@@ -31,7 +31,7 @@ size=$(lsblk -bdno SIZE "$dev")
 echo "formatting $dev ($size bytes, serial $JH_TEST_SERIAL)"
 findmnt -rno TARGET -S "${dev}1" && { echo "refusing: mounted"; exit 1; } || true
 
-# prepare_drive.sh:120, :121 and :134.
+# The commands in docs/0a-drive-format.md.
 wipefs -a -- "$dev"
 parted -s -- "$dev" mklabel gpt mkpart primary ext4 1MiB 100%
 partprobe "$dev" || true

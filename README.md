@@ -81,9 +81,9 @@ separately) and `msys-2.0.dll`, which ships beside the executable.
 
 ## Status
 
-Working and measured, **not yet released**. See
-[docs/WHERE-WE-ARE.md](docs/WHERE-WE-ARE.md) for what is proven and what is
-still open — ownership mapping and re-plug behaviour are the main gaps, and
+Working and measured; the latest release is on the
+[releases page](https://github.com/Eyekeepers/ext4-windows/releases). Still
+open: mapping ext4 ownership to Windows permissions and re-plug behaviour, and
 `GetFinalPathNameByHandle` does not yet work on the mount, which
 [matters more than it sounds](docs/0c-step4-ownership-and-paths.md).
 

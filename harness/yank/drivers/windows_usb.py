@@ -9,7 +9,7 @@ the harness, ext4win and Python all live on this computer.
 
 The drive is found by its USB serial every time, never by disk number, and the
 harness refuses a device that is not on the USB bus given. It must already be
-formatted as prepare_drive.sh formats a drive, and it must be a spare: every
+formatted as docs/0a-drive-format.md formats a drive, and it must be a spare: every
 iteration writes to it and then takes it away mid-write.
 
 How the drive vanishes (`--pull`):

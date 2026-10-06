@@ -2,15 +2,15 @@
 """Decide, without writing a byte, whether a disk is one we may open.
 
     python drive_check.py <disk, partition or image>      # one JSON object
-    python drive_check.py --identity <...>                # just nodev|<uuid>
+    python drive_check.py --identity <...>                # just the ext4 UUID
 
 Reads the partition table (GPT, or MBR on older hand-made drives) and the ext4
 superblock, nothing else, through a file opened read-only. On Windows the path
-is \\\\.\\PhysicalDriveN and the caller is the enrolled service; here it is an
+is \\\\.\\PhysicalDriveN and the caller is whatever will mount it; here it is an
 image file or a block device.
 
-The verdict is "ok" or "refuse", and a refusal always says why, in words an
-owner could act on. It refuses before anything is mounted:
+The verdict is "ok" or "refuse", and a refusal always says why, in words a
+person could act on. It refuses before anything is mounted:
 
   - a partition Windows treats as its own (the "format this disk" risk);
   - an ext4 feature outside the set this program has been qualified for --
@@ -20,8 +20,8 @@ owner could act on. It refuses before anything is mounted:
   - a superblock whose checksum does not match, or one marked as having
     errors, which want a Linux repair first.
 
-It also returns the ext4 UUID as the licence identity the product already accepts
-for a bridge that passes no serial (`nodev|<uuid>`, hosts/linux/adapter.sh).
+It also returns the ext4 UUID, which identifies the drive whatever letter or
+disk number Windows gives it, and whether or not its USB bridge passes a serial.
 
 Standard library only, so the service can run it from the computer it is
 installed on without anything else.
@@ -60,10 +60,10 @@ RO_COMPAT = {0x1: "sparse_super", 0x2: "large_file", 0x4: "btree_dir", 0x8: "hug
              0x1000: "readonly", 0x2000: "project", 0x4000: "shared_blocks", 0x8000: "verity",
              0x10000: "orphan_present"}
 
-# What a drive is made with, by any e2fsprogs from the last decade
+# What a drive formatted as in docs/0a-drive-format.md has, by any e2fsprogs from the last decade
 # (docs/0a-drive-format.md). Older drives use a subset; that is fine. Anything
 # else has not been through the yank harness, so it is refused rather than
-# found out about with the owner's data. Widen this only with a test run.
+# found out about with someone's data. Widen this only with a test run.
 QUALIFIED = {
     "compat": {"has_journal", "ext_attr", "resize_inode", "dir_index", "sparse_super2",
                "orphan_file", "fast_commit", "lazy_bg"},
@@ -75,8 +75,8 @@ QUALIFIED = {
                   "extra_isize", "metadata_csum", "orphan_present"},
 }
 WHY = {
-    "encrypt": "it uses per-file encryption (fscrypt), which the product does not use; drives are encrypted whole or not at all",
-    "casefold": "it has case-insensitive folders, which the product's files are not written for",
+    "encrypt": "it uses per-file encryption (fscrypt), which this program has not been tested with",
+    "casefold": "it has case-insensitive folders, which this program has not been tested with",
     "inline_data": "it stores small files inside their inodes, which this program has not been tested with",
     "journal_dev": "its journal lives on another device",
     "compression": "it asks for compression, which ext4 has never supported",
@@ -215,14 +215,14 @@ def check(path: str) -> dict:
             reasons.append("no ext4 filesystem was found on this disk")
             return {**report, "verdict": "refuse", "reasons": reasons}
         if len(candidates) > 1:
-            reasons.append("more than one ext4 filesystem is on this disk; a drive has one")
+            reasons.append("more than one ext4 filesystem is on this disk; this program opens one")
             return {**report, "verdict": "refuse", "reasons": reasons}
 
         part = candidates[0]
         fs = superblock(disk, part["offset"])
         report["selected_partition"] = part["index"]
         report["ext4"] = fs
-        report["identity"] = f"nodev|{fs['uuid']}"
+        report["identity"] = fs["uuid"]
 
         if part["type_name"] in WINDOWS_GPT_TYPES.values() or (scheme == "mbr" and part["type"] in ("0x07", "0x0b", "0x0c")):
             reasons.append(f"the partition is marked as {part['type_name']}, so Windows treats it as its own "
@@ -246,9 +246,6 @@ def check(path: str) -> dict:
         if "needs_recovery" in fs["features"]["incompat"] or "orphan_present" in fs["features"]["ro_compat"]:
             report["notes"].append("it was not shut down cleanly; its journal will be replayed when it is "
                                    "opened, which is what keeps a pulled drive whole")
-        if fs["label"] != "EXT4TEST":
-            report["notes"].append(f"its label is '{fs['label']}', not EXT4TEST; whether it holds a "
-                                   "the product installation is decided from its files once opened")
         return {**report, "verdict": "refuse" if reasons else "ok", "reasons": reasons}
     finally:
         disk.close()
@@ -257,7 +254,7 @@ def check(path: str) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("path")
-    parser.add_argument("--identity", action="store_true", help="print only the licence identity")
+    parser.add_argument("--identity", action="store_true", help="print only the drive's ext4 UUID")
     args = parser.parse_args()
     try:
         report = check(args.path)

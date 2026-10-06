@@ -1,7 +1,8 @@
-"""A PostgreSQL cluster on the disk under test, as the product's memory runs one.
+"""A PostgreSQL cluster on the disk under test, as a program storing its data there
+would run one.
 
-The binaries are the product's own (the payload's PostgreSQL 16), never the
-computer's. The cluster is created with page checksums so that after a pull
+The binaries come from a payload given on the command line (PostgreSQL 16),
+never the computer's. The cluster is created with page checksums so that after a pull
 `pg_checksums --check` reads every page and names any that came back torn --
 a stronger check than the queries alone, and the payload carries no amcheck.
 

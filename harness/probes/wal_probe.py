@@ -1,8 +1,8 @@
-"""Does SQLite's WAL mode actually engage on a ext4win mount, and do its locks work?
+"""Does SQLite's WAL mode actually engage on an ext4win mount, and do its locks work?
 
 WAL needs shared memory (the -shm file, memory-mapped) and byte-range locks.
-Hermes drops every one of its databases to journal_mode=DELETE when those fail
-on a FUSE-like filesystem, and DELETE is the mode that loses an acknowledged
+Programs such as Hermes Agent drop their databases to journal_mode=DELETE when
+those fail on a FUSE-like filesystem, and DELETE is the mode that loses an acknowledged
 commit on a pull unless the filesystem syncs the folder after the journal is
 removed. So whether WAL works here decides which risk Windows carries.
 """
@@ -45,7 +45,7 @@ out["checkpoint"] = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
 conn.execute("PRAGMA integrity_check").fetchone()
 out["integrity"] = conn.execute("PRAGMA integrity_check").fetchone()[0]
 
-# And the mode Hermes falls back to, so we know it is usable at all.
+# And the mode programs fall back to, so we know it is usable at all.
 conn2 = sqlite3.connect(root / "delete-probe.sqlite", isolation_level=None)
 conn2.execute("PRAGMA journal_mode=DELETE")
 out["delete_mode"] = conn2.execute("PRAGMA journal_mode").fetchone()[0]

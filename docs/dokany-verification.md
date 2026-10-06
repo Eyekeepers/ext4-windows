@@ -17,8 +17,8 @@ Checked, not assumed, on 2026-10-03.
 | `Dokan_x64.msi` | SHA-256 `69FF8CB37BFEC3A75921C85FFD1C6370B50A9EC4ECEF2CF3A009D488DCBF5465` |
 
 Record the hashes here rather than the installers themselves: this repository
-is to be published, and it carries source, not vendor binaries. the product pins
-the installer by hash the same way `native-sources.json` pins PostgreSQL.
+is public, and it carries source, not vendor binaries. Anything that installs
+Dokany for this program should pin the installer by these hashes.
 
 ## The installer
 
@@ -49,8 +49,8 @@ Memory Integrity included. So:
 - **what the owner's computer gets** is a Microsoft-signed driver from an
   identified publisher, installed once, which uninstalls cleanly;
 - **our own program stays unprivileged** and in user space. It is the thing
-  that still needs free signing from SignPath (Project 0e), and Windows will
-  show *SignPath Foundation* as its publisher.
+  that is signed through SignPath (see `CODE-SIGNING-POLICY.md`), and Windows
+  will show *SignPath Foundation* as its publisher.
 
 ## Still to confirm
 
@@ -58,4 +58,4 @@ Memory Integrity included. So:
   Memory Integrity both on. That is 0c step 2.
 - Clean uninstall, leaving the drive untouched. 0c step 9.
 - Whether Smart App Control, which is stricter again, lets our own unsigned
-  development builds run at all. Project 0e.
+  development builds run at all.

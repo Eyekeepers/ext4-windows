@@ -7,20 +7,20 @@ Linux and on Windows. The disk-pulling half is per platform (`yank/drivers/`).
 
 ## What it writes
 
-The patterns software on a drive actually uses, each with exactly the
+The write patterns real programs use, each with exactly the
 durability that software asks for (see `yank/workload.py`):
 
 | Pattern | Durability asked for | What must hold after a pull |
 |---|---|---|
 | credential file | fsync, plus its folder | intact |
 | replace/durable | temp, fsync, rename, fsync folder | never older than the last acknowledged version |
-| replace/app (the product's `integration.write_text`) | temp, fsync, rename | a whole version, never torn |
-| replace/none (`seed.py`'s `_write`, most Node code) | temp, rename, no fsync | a whole version, never empty or torn |
+| replace/app | temp, fsync, rename | a whole version, never torn |
+| replace/none (most Node code) | temp, rename, no fsync | a whole version, never empty or torn |
 | append to memory | fsync per line | every acknowledged line, in order |
 | SQLite, `DELETE` journal | `synchronous=EXTRA` | every acknowledged row; `integrity_check` ok |
 | SQLite, `WAL` | `synchronous=FULL` | every acknowledged row; `integrity_check` ok |
 | large file copy | fsync, plus its folder | acknowledged copies byte-identical |
-| PostgreSQL 16 (the product's own build) | default commit | every acknowledged commit; index and table agree; `pg_checksums` clean |
+| PostgreSQL 16 | default commit | every acknowledged commit; index and table agree; `pg_checksums` clean |
 
 Every write is recorded in an ack log on another disk the moment it is
 acknowledged. The verifier checks the recovered drive against that record, and
@@ -30,12 +30,12 @@ also checks every earlier run on the same drive.
 
 ```
 sudo python3 -m yank.drivers.linux_dm --work /var/tmp/yank --iterations 20 \
-     --pg-payload <product>/dist/app/postgres.tar.gz
+     --pg-payload <a .tar.gz with postgres/bin inside>
 ```
 
 Run from this `harness/` folder. Root attaches the disk; the workload and the
 verifier run as an ordinary account. The drive is an image formatted exactly as
-`prepare_drive.sh` formats a real one; the pull swaps its device-mapper table
+`docs/0a-drive-format.md` formats a real one; the pull swaps its device-mapper table
 for the `error` target with `--noflush`. After each pull it mounts the drive
 (the journal replays), unmounts, runs `e2fsck -fn`, mounts again and verifies.
 
@@ -54,8 +54,7 @@ harness reports means anything.
   `DELETE`-journal SQLite database, the very last write acknowledged before the
   pull, while it used `synchronous=FULL`. SQLite documents that in this mode
   only `EXTRA` makes the last commit durable, so the harness was asking more
-  than the setting promises. It now uses `EXTRA`. The finding goes to
-  the product's Project 2, which checks which modes the engines' databases use.
+  than the setting promises. It now uses `EXTRA`.
 - **Reference run, 2026-10-02 (the bar Windows must meet):** 20 pulls at
   random moments, 3.2–14.5 s into heavy writing, on one 2 GiB drive image.
   Results are in `docs/results/linux-reference-2026-10-02.jsonl`.

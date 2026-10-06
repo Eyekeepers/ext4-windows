@@ -14,11 +14,12 @@ Then Linux (WSL) is the judge, exactly as in the Linux reference: replay the
 journal, `e2fsck -fn` must be clean, and the verifier checks every write the
 log says was acknowledged -- in this run and every earlier one on the drive.
 
-PostgreSQL is not in this run: its Windows build is Project 4. SQLite,
+PostgreSQL is not in this run: there is no Windows build to run from the drive
+yet. SQLite,
 atomic replaces, appends, copies and credential files are.
 
 The image must be one this harness made (`--fresh`), never a real drive.
-`--fresh` lays it out the way prepare_drive.sh lays out a drive -- GPT, one
+`--fresh` lays it out the way docs/0a-drive-format.md lays out a drive -- GPT, one
 partition -- so the program is asked to do on an image what it does on the
 stick. The first step 3 run used a whole-disk image instead and so passed
 `--part 0`; its numbers are recorded that way in docs/0c-step3-read-write.md.
@@ -92,7 +93,7 @@ sync
 
 
 def fresh(image: Path, size: str) -> None:
-    """prepare_drive.sh:121 and :134, on an image, from Linux: one partition in
+    """docs/0a-drive-format.md's two commands, on an image, from Linux: one partition in
     a GPT, so the program is asked on an image exactly what the drive asks."""
     done = subprocess.run(["wsl.exe", "-d", "Ubuntu", "-u", "root", "-e", "bash", "-c", FRESH,
                            "fresh", wsl_path(image), size], capture_output=True, text=True)

@@ -33,18 +33,18 @@ was not elevated, and Dokany's mount-manager mode may need that, so this is not
 yet a settled answer — it is one tried fix that did not work. The option is
 kept behind `--mount-manager` rather than removed.
 
-**Why it matters more than it sounds.** OpenClaw decides SQLite's journal mode
+**Why it matters more than it sounds.** Real software makes decisions from this
+call. [OpenClaw](https://github.com/openclaw/openclaw), for one, decides SQLite's journal mode
 from exactly this call (`dist/sqlite-wal-*.js`, `resolvePathJournalPolicy`): a
 drive-letter path is resolved with the real-path call, and **a failure is
 treated as network storage**, which selects `journal_mode=DELETE`. Its
 databases then run with `synchronous=NORMAL`, a combination SQLite's own
 documentation warns can corrupt a database on power loss.
 
-So on this filesystem, as it stands, the engine picks its least safe mode — not
-because of anything about ext4, but because one Windows API cannot describe our
-volume. The folder-durability fix from step 7 is what keeps that survivable.
-The full write-up, including what Hermes does differently, is the product's
-`docs/WINDOWS-DURABILITY.md`.
+So on this filesystem, as it stands, such a program picks its least safe mode —
+not because of anything about ext4, but because one Windows API cannot describe
+the volume. The folder-durability fix from step 7 is what keeps that
+survivable.
 
 **Still to do:** find out why the volume has no DOS path and whether an
 elevated mount-manager registration fixes it. Until then the drive works, and
@@ -66,8 +66,9 @@ SQLite's WAL mode works completely, which is the mode both engines want:
 | `journal_mode=DELETE` with `synchronous=EXTRA` | works |
 
 Shared memory and byte-range locking are the two things WAL needs and that
-FUSE-like filesystems usually lack — it is why Hermes has a fallback at all.
-Both work here, so Hermes keeps WAL.
+FUSE-like filesystems usually lack, and it is why programs such as Hermes
+Agent carry a fallback to rollback-journal mode at all. Both work here, so a
+program that tries WAL keeps it.
 
 ## Ownership — not yet measured
 

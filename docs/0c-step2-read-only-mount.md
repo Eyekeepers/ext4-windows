@@ -17,7 +17,7 @@ shapes an agent's drive has was mounted at `M:` and listed by Windows:
 | Checked | Result |
 |---|---|
 | Directory listing | `app`, `data`, `readme.txt`, `lost+found`, all marked read-only |
-| Nested directories | `data/hermes/profiles/personal`, `data/secrets` |
+| Nested directories | several levels deep, including a private (`0700`) folder |
 | File contents | `readme.txt` read correctly through Windows |
 | **A 16-byte file, SHA-256** | `8CE9A80…79DEE` — identical to Linux's |
 | **A 3 MB random file, SHA-256** | `CF01BDB…F7736` — identical to Linux's |
@@ -46,10 +46,10 @@ Windows' side:
 2. **Windows' volume list does not show the mount.** Files work, but
    `Get-Volume -DriveLetter M` returns nothing, because without
    `DOKAN_OPTION_MOUNT_MANAGER` the mount is not registered with Windows'
-   mount manager. To settle before Project 7, which has to find the drive:
-   whether the product needs it listed as a volume, and whether the mount-manager
-   option needs administrator rights. Our own code looks the drive up by its
-   ext4 UUID and does not need the volume list.
+   mount manager. Still to settle: whether a user of this program needs the
+   drive listed as a volume, and whether the mount-manager option needs
+   administrator rights. Finding the drive by its ext4 UUID does not need the
+   volume list.
 3. **The program carries the MSYS runtime.** It depends on `msys-2.0.dll`
    besides `dokan2.dll` and the Windows libraries, because LKL needs a POSIX
    environment to build. That is one more file to ship, and its licence

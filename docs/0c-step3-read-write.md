@@ -18,7 +18,8 @@ Patterns: credential files, durable/app/no-fsync atomic replaces, fsync'd
 appends, SQLite in rollback (`synchronous=EXTRA`) and WAL mode, and 8 MB copies.
 Results: `docs/results/windows-step3-kill-2026-10-05.jsonl`.
 
-PostgreSQL is not in this run; its Windows build is the product's Project 4.
+PostgreSQL is not in this run: it needs a Windows build of PostgreSQL run from
+the drive, which does not exist yet.
 
 ## What it found and fixed on the way
 
@@ -49,4 +50,5 @@ predate it.
 - Pulls by detaching a VHDX (`Dismount-VHD`) and Hyper-V power-offs, which
   need administrator rights and Hyper-V; the kill test above does not cut a
   real device's power.
-- PostgreSQL in the workload, once Project 4 has a Windows build.
+- PostgreSQL in the workload, once there is a Windows build to run from the
+  drive.

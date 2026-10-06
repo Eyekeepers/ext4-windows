@@ -4,7 +4,7 @@ Step 8 asks for hours of the workload with random pulls and zero failures of
 the pass criteria.
 
 Measured 2026-10-05, Windows 11 Pro x64, `ext4win --read-write` on a 3 GiB image
-laid out as `prepare_drive.sh` lays out a drive (GPT, one partition), pulled by
+laid out as a real drive is (GPT, one partition; `0a-drive-format.md`), pulled by
 killing the program at a random moment 2–20 s into heavy writing.
 
 ## Result: 50 of 50 pulls passed
@@ -31,11 +31,12 @@ Results: `docs/results/windows-soak-50-2026-10-05.jsonl`.
 **The rollback-journal column is the point of this run.** That is the pattern
 that lost an acknowledged commit on the real drive before the folder-durability
 fix (`0c-step7-usb-drive.md`), and 27,190 of its rows now survive fifty pulls.
-It is also the mode OpenClaw is currently choosing on Windows for reasons that
-have nothing to do with us (`0c-step4-ownership-and-paths.md`), which is why it
-was worth proving at this volume rather than at ten pulls.
+It is also the mode some real software falls back to on this filesystem
+(`0c-step4-ownership-and-paths.md`), which is why it was worth proving at this
+volume rather than at ten pulls.
 
-PostgreSQL is not in this run; its Windows build is the product's Project 4.
+PostgreSQL is not in this run: it needs a Windows build of PostgreSQL run from
+the drive, which does not exist yet.
 
 ## What this does not answer
 

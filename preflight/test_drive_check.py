@@ -5,7 +5,7 @@
 
 Linux only (it formats images with parted, mkfs.ext4 and debugfs, as root for
 the loop devices). Every image is created in a temporary folder and deleted.
-Each case states what a real drive in that shape would mean to an owner.
+Each case states what a real drive in that shape would mean to its user.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ def run(*cmd: str) -> str:
 
 def make_drive(path: Path, *, table: str = "gpt", fs_type: str = "ext4", features: str = "",
                label: str = "EXT4TEST", sector: int = 512) -> str:
-    """Like tools/prepare_drive.sh: one partition from 1 MiB, formatted ext4.
+    """As docs/0a-drive-format.md: one partition from 1 MiB, formatted ext4.
     Returns the filesystem UUID as blkid reads it."""
     path.unlink(missing_ok=True)
     run("truncate", "-s", "256M", str(path))
@@ -56,8 +56,8 @@ def expect(name: str, report: dict, verdict: str, *, reason: str = "", note: str
         problems.append(f"no reason mentioning {reason!r}")
     if note and not any(note in n for n in report.get("notes", [])):
         problems.append(f"no note mentioning {note!r}")
-    if uuid and report.get("identity") != f"nodev|{uuid}":
-        problems.append(f"identity {report.get('identity')!r}, wanted nodev|{uuid}")
+    if uuid and report.get("identity") != uuid:
+        problems.append(f"identity {report.get('identity')!r}, wanted {uuid}")
     status = "ok  " if not problems else "FAIL"
     print(f"  {status} {name}: {report.get('verdict')}"
           + (f" — {report['reasons'][0][:110]}" if report.get("reasons") else ""))
@@ -74,7 +74,7 @@ def main() -> int:
 
         print("drives that must be accepted")
         uuid = make_drive(image)
-        expect("made like prepare_drive.sh (newest defaults)", drive_check.check(str(image)), "ok", uuid=uuid)
+        expect("made as documented (newest defaults)", drive_check.check(str(image)), "ok", uuid=uuid)
 
         uuid = make_drive(image, features="^orphan_file,^metadata_csum_seed")
         expect("an older drive, before orphan_file", drive_check.check(str(image)), "ok", uuid=uuid)
@@ -89,7 +89,7 @@ def main() -> int:
         expect("an MBR disk with a Linux partition", drive_check.check(str(image)), "ok", uuid=uuid)
 
         uuid = make_drive(image, label="MYDRIVE")
-        expect("a different label", drive_check.check(str(image)), "ok", uuid=uuid, note="not EXT4TEST")
+        expect("a different label", drive_check.check(str(image)), "ok", uuid=uuid)
 
         uuid = make_drive(image, table="none")
         expect("no partition table", drive_check.check(str(image)), "ok", uuid=uuid, note="may offer to format")
@@ -143,7 +143,7 @@ def main() -> int:
         for failure in FAILURES:
             print(failure, file=sys.stderr)
         return 1
-    print("\ndrive_check: ok — accepts every drive shape the product makes, refuses what it has not been "
+    print("\ndrive_check: ok — accepts every drive shape it was qualified for, refuses what it has not been "
           "qualified for, and reads without writing")
     return 0
 
